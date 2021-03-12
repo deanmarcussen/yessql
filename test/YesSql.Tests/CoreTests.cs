@@ -3517,6 +3517,53 @@ namespace YesSql.Tests
         }
 
         [Fact]
+        public async Task ShouldMoveFromOneCollectionToAnother()
+        {
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates",
+                };
+
+                session.Save(bill);
+            }
+
+            // Force bump the version up.
+            using (var session = _store.CreateSession())
+            {
+                var person = await session.Query<Person>().FirstOrDefaultAsync();
+                session.Save(person);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var person = await session.Query<Person>().FirstOrDefaultAsync();
+                Assert.NotNull(person);
+
+                // The identifier must be reset when saving in a new collection.
+                person.Id = 0;
+
+                session.Save(person, "Collection1");
+
+                session.Delete(person);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var person = await session.Query<Person>().FirstOrDefaultAsync();
+                Assert.Null(person);
+            }       
+
+            using (var session = _store.CreateSession())
+            {
+                var person = await session.Query<Person>("Collection1").FirstOrDefaultAsync();
+                Assert.NotNull(person);
+            }
+        }
+
+        [Fact]
         public virtual async Task ShouldIndexWithDateTime()
         {
             _store.RegisterIndexes<ArticleBydPublishedDateProvider>();
