@@ -1,9 +1,12 @@
 using Dapper;
+using Parlot;
 using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
@@ -32,7 +35,7 @@ namespace YesSql.Tests
         public CoreTests(ITestOutputHelper output)
         {
             _output = output;
-            
+
             var configuration = CreateConfiguration();
 
             CleanDatabase(configuration, false);
@@ -212,9 +215,9 @@ namespace YesSql.Tests
                             //.Column<sbyte?>(nameof(TypesIndex.NullableSByte), c => c.Nullable())
                             .Column<short?>(nameof(TypesIndex.NullableShort), c => c.Nullable())
                             .Column<TimeSpan?>(nameof(TypesIndex.NullableTimeSpan), c => c.Nullable())
-                            //.Column<uint?>(nameof(TypesIndex.NullableUInt), c => c.Nullable())
-                            //.Column<ulong?>(nameof(TypesIndex.NullableULong), c => c.Nullable())
-                            //.Column<ushort?>(nameof(TypesIndex.NullableUShort), c => c.Nullable())
+                        //.Column<uint?>(nameof(TypesIndex.NullableUInt), c => c.Nullable())
+                        //.Column<ulong?>(nameof(TypesIndex.NullableULong), c => c.Nullable())
+                        //.Column<ushort?>(nameof(TypesIndex.NullableUShort), c => c.Nullable())
                         );
 
                     builder.CreateMapIndexTable<PersonByName>(column => column
@@ -227,11 +230,11 @@ namespace YesSql.Tests
                             "Col1"
                             );
 
-                   builder.CreateReduceIndexTable<PersonsByNameCol>(column => column
-                            .Column<string>(nameof(PersonsByNameCol.Name))
-                            .Column<int>(nameof(PersonsByNameCol.Count)),
-                            "Col1"
-                            );                            
+                    builder.CreateReduceIndexTable<PersonsByNameCol>(column => column
+                             .Column<string>(nameof(PersonsByNameCol.Name))
+                             .Column<int>(nameof(PersonsByNameCol.Count)),
+                             "Col1"
+                             );
 
                     transaction.Commit();
                 }
@@ -2515,9 +2518,393 @@ namespace YesSql.Tests
 
             using (var session = _store.CreateSession())
             {
-                Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>().CountAsync());
-                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>(x => x.SomeName == "Steve").CountAsync());
-                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>().Where(x => x.SomeName == "Steve").CountAsync());
+                // Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>().CountAsync());
+
+
+
+                //                 var parameter = Expression.Parameter(typeof(PersonByName), "SomeName");
+
+                //                 // ParameterExpression x = Expression.Parameter(typeof(string), "x");
+
+                //             //     var body = 
+
+                //                 Expression body = Expression.Call(
+                //                     parameter,
+                //                     typeof(string).GetMethod("Contains", new[] { typeof(string) })!,
+                //                     Expression.Constant("Steve")
+                //                 );
+
+                // Expression<Func<PersonByName, bool>> expr = Expression.Lambda<Func<PersonByName, bool>>(body, parameter);
+
+                //     var constant = Expression.Constant("Steve");
+                //     var equal = Expression.Equal(parameter, constant);
+
+                var indexType = typeof(PersonByName);
+
+
+                PropertyInfo propertyName = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
+                MethodInfo containsMethod = typeof(string).GetMethod("Contains", new[] { typeof(string) })!;
+
+                ParameterExpression parameter = Expression.Parameter(indexType);
+                MemberExpression propertyExpression = Expression.Property(parameter, propertyName);
+
+                var name = "Steve";
+
+                ConstantExpression value = Expression.Constant(name);
+
+                Expression containsBody = Expression.Call(
+                    propertyExpression,
+                    containsMethod,
+                    value
+                );
+
+                var containsExpression = Expression.Lambda<Func<PersonByName, bool>>(containsBody, parameter);
+
+                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>(containsExpression).CountAsync());
+
+                var equalsBody = Expression.Equal(
+                        propertyExpression,
+                        value
+                    );
+
+                var equalsExpression = Expression.Lambda<Func<PersonByName, bool>>(
+                        equalsBody,
+                        parameter
+                    );
+
+
+                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>(equalsExpression).CountAsync());
+
+
+                Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve") || x.SomeName.Contains("Bill")).CountAsync());
+
+
+
+                // Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>().Where(x => x.SomeName == "Steve").CountAsync());
+            }
+        }
+
+        [Fact]
+        public async Task ShouldOrderByMappedIndex()
+        {
+            _store.RegisterIndexes<PersonIndexProvider>();
+
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates",
+                };
+
+                var steve = new Person
+                {
+                    Firstname = "Steve",
+                    Lastname = "Balmer"
+                };
+
+                session.Save(bill);
+                session.Save(steve);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+
+                var indexType = typeof(PersonByName);
+
+
+                PropertyInfo propertyName = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
+
+                ParameterExpression parameter = Expression.Parameter(indexType);
+                // MemberExpression propertyExpression = Expression.Property(parameter, propertyName);
+
+                Expression orderByProperty = Expression.Property(parameter, propertyName);
+
+                var orderByExpression = Expression.Lambda<Func<PersonByName, object>>(orderByProperty, parameter);
+
+                var results = await session.Query().For<Person>()
+                    .With<PersonByName>(x => x.SomeName == "Bob" || x.SomeName == "Steve")
+                    .With<PersonByName>() // the second is necesary if we are on multiple tables, and another table has been linked
+                        .OrderByDescending(x => x.SomeName).ListAsync();
+
+
+                Assert.Equal("Steve", results.FirstOrDefault().Firstname);
+
+                var results2 = await session.Query().For<Person>()
+                    .With<PersonByName>(x => x.SomeName == "Bob" || x.SomeName == "Steve")
+                    .With<PersonByName>() // the second is necesary if we are on multiple tables, and another table has been linked
+                        .OrderByDescending(orderByExpression).ListAsync();
+
+                Assert.Equal("Steve", results2.FirstOrDefault().Firstname);
+            }
+        }
+
+        [Fact]
+        public async Task ShouldQuerySearchExpressionByMappedIndex()
+        {
+            _store.RegisterIndexes<PersonIndexProvider>();
+
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates",
+                };
+
+                var steve = new Person
+                {
+                    Firstname = "Steve",
+                    Lastname = "Balmer"
+                };
+
+                session.Save(bill);
+                session.Save(steve);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var statement = new SearchStatement
+                (
+                    new TextSpan("sn"),
+                    new List<StatementExpression>
+                    {
+                        new SearchWhereStatement
+                        (
+                            new SearchAndExpression
+                            (
+                                new SearchContainsExpression(new SearchValue(new TextSpan("Steve"))),
+                                new SearchNotContainsExpression(new SearchValue(new TextSpan("Bill")))
+                            )
+                        )
+                    }
+                );
+
+
+                // var indexType = typeof(PersonByName);
+
+                // PropertyInfo propertyName = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
+                // MethodInfo containsMethod = typeof(string).GetMethod("Contains", new[] { typeof(string) })!;
+
+                // ParameterExpression parameter = Expression.Parameter(indexType);
+                // MemberExpression propertyExpression = Expression.Property(parameter, propertyName);
+
+                // var name = "Steve";
+
+                // ConstantExpression value = Expression.Constant(name);
+
+                // Expression containsBody = Expression.Call(
+                //     propertyExpression,
+                //     containsMethod,
+                //     value
+                // );
+
+                // var containsExpression = Expression.Lambda<Func<PersonByName, bool>>(containsBody, parameter);
+
+                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, "SomeName").CountAsync());
+
+            }
+        }
+
+
+        [Fact]
+        public async Task ShouldQuerySearchAndExpression()
+        {
+            _store.RegisterIndexes<PersonIndexProvider>();
+
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates",
+                };
+
+                var steve = new Person
+                {
+                    Firstname = "Steve",
+                    Lastname = "Balmer"
+                };
+
+                session.Save(bill);
+                session.Save(steve);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var statement = new SearchStatement
+                (
+                    new TextSpan("sn"),
+                    new List<StatementExpression>
+                    {
+                        new SearchWhereStatement
+                        (
+                            new SearchAndExpression(
+                                new SearchContainsExpression(new SearchValue(new TextSpan("Steve"))),
+                                new SearchNotContainsExpression(new SearchValue(new TextSpan("Bill")))
+                            )
+                        )
+                    }
+                );
+
+                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve") && x.SomeName.NotContains("Bill")).CountAsync());
+
+                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, "SomeName").CountAsync());
+            }
+        }
+
+
+        [Fact]
+        public async Task ShouldQuerySearchOrExpression()
+        {
+            _store.RegisterIndexes<PersonIndexProvider>();
+
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates",
+                };
+
+                var steve = new Person
+                {
+                    Firstname = "Steve",
+                    Lastname = "Balmer"
+                };
+
+                session.Save(bill);
+                session.Save(steve);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var statement = new SearchStatement(
+                    new TextSpan("sn"),
+                    new List<StatementExpression>
+                    {
+                        new SearchWhereStatement
+                        (
+                            new SearchOrExpression
+                            (
+                                new SearchContainsExpression(new SearchValue(new TextSpan("Steve"))),
+                                new SearchContainsExpression(new SearchValue(new TextSpan("Bill")))
+                            )
+                        )
+                    }
+                );
+
+                Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Bill") || x.SomeName.Contains("Steve")).CountAsync());
+
+                Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, "SomeName").CountAsync());
+            }
+        }
+
+        [Fact]
+        public async Task ShouldQuerySearchOrderExpression()
+        {
+            _store.RegisterIndexes<PersonIndexProvider>();
+
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates",
+                };
+
+                var steve = new Person
+                {
+                    Firstname = "Steve",
+                    Lastname = "Balmer"
+                };
+
+                session.Save(bill);
+                session.Save(steve);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var statement = new SearchStatement(
+                    new TextSpan("sn"),
+                    new List<StatementExpression>
+                    {
+                        new SearchWhereStatement
+                        (
+                            new SearchOrExpression
+                            (
+                                new SearchContainsExpression(new SearchValue(new TextSpan("Steve"))),
+                                new SearchContainsExpression(new SearchValue(new TextSpan("Bill")))
+                            )
+                        ),
+                        new SearchOrderDescendingStatement
+                        (
+                            new SearchOrderExpression()
+                        )
+                    }
+                );
+
+                var normalQuery = session.Query().For<Person>().With<PersonByName>(x => x.SomeName == "Steve" || x.SomeName == "Bill");
+
+                Assert.Equal(2, await normalQuery.CountAsync());
+
+                var results = await normalQuery
+                    .With<PersonByName>() // the second is necesary if we are on multiple tables, and another table has been linked
+                        .OrderByDescending(x => x.SomeName).ListAsync();
+
+                Assert.Equal("Steve", results.FirstOrDefault().Firstname);
+
+                var statementQuery = session.Query().For<Person>().With<PersonByName>().WithStatement(statement, x => x.SomeName);
+
+                var searchResults = await statementQuery.ListAsync();
+                Assert.Equal("Steve", searchResults.FirstOrDefault().Firstname);
+            }
+        }
+
+
+        [Fact]
+        public async Task ShouldQuerySearchNotContains()
+        {
+            _store.RegisterIndexes<PersonIndexProvider>();
+
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates",
+                };
+
+                var steve = new Person
+                {
+                    Firstname = "Steve",
+                    Lastname = "Balmer"
+                };
+
+                session.Save(bill);
+                session.Save(steve);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var statement = new SearchStatement(
+                    new TextSpan("sn"),
+                    new List<StatementExpression>
+                    {
+                        new SearchWhereStatement
+                        (
+                            new SearchNotContainsExpression(new SearchValue(new TextSpan("Steve")))
+                        )
+                    }
+                );
+
+                var propertyInfo = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
+
+                Assert.Equal("Bill", (await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, propertyInfo).FirstOrDefaultAsync()).Firstname);
+
+                Assert.Equal("Bill", (await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, x => x.SomeName).FirstOrDefaultAsync()).Firstname);
+
+                Assert.Equal("Bill", (await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, "SomeName").FirstOrDefaultAsync()).Firstname);
             }
         }
 
@@ -2683,7 +3070,7 @@ namespace YesSql.Tests
 
             _store.RegisterIndexes<ShapeIndexProvider<Circle>>();
             _store.RegisterIndexes<ShapeIndexProvider<Square>>();
-            
+
             using (var session = _store.CreateSession())
             {
                 session.Save(new Square { Size = 10 });
@@ -3517,7 +3904,7 @@ namespace YesSql.Tests
             {
                 Assert.Equal(2, (await session.QueryIndex<PersonsByNameCol>(x => x.Name == "Bill", "Col1").FirstOrDefaultAsync()).Count);
             }
-        }        
+        }
 
         [Fact]
         public async Task ShouldGetAndDeletePerCollection()
@@ -3732,7 +4119,7 @@ namespace YesSql.Tests
 
                 var dialect = _store.Configuration.SqlDialect;
 
-                var publishedInTheFutureSql = "SELECT count(1) FROM " + dialect.QuoteForTableName(TablePrefix + nameof(ArticleByPublishedDate)) + " WHERE " +  dialect.QuoteForColumnName(nameof(ArticleByPublishedDate.PublishedDateTime)) + " > " + dialect.RenderMethod("now");
+                var publishedInTheFutureSql = "SELECT count(1) FROM " + dialect.QuoteForTableName(TablePrefix + nameof(ArticleByPublishedDate)) + " WHERE " + dialect.QuoteForColumnName(nameof(ArticleByPublishedDate.PublishedDateTime)) + " > " + dialect.RenderMethod("now");
                 publishedInTheFutureResult = await connection.QueryFirstOrDefaultAsync<int>(publishedInTheFutureSql);
 
                 var publishedInThePastSql = "SELECT count(1) FROM " + dialect.QuoteForTableName(TablePrefix + nameof(ArticleByPublishedDate)) + " WHERE " + dialect.QuoteForColumnName(nameof(ArticleByPublishedDate.PublishedDateTime)) + " < " + dialect.RenderMethod("now");
@@ -4736,7 +5123,7 @@ namespace YesSql.Tests
                 session.Save(property);
             }
         }
-        
+
         [Fact]
         public async Task ShouldCommitInMultipleCollections()
         {
@@ -5272,9 +5659,9 @@ namespace YesSql.Tests
                 // This will produce a query that batches at 2099 parameters which will fail.
                 // When reduced to a maximum to 2098, i.e. stopping the batch before 2099, it will pass.
                 foreach (var person in persons)
-                {   
+                {
                     session.Save(person);
-                }              
+                }
             }
         }
     }
