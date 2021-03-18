@@ -19,6 +19,7 @@ using YesSql.Tests.Commands;
 using YesSql.Tests.CompiledQueries;
 using YesSql.Tests.Indexes;
 using YesSql.Tests.Models;
+using YesSql.Tests.Search;
 
 namespace YesSql.Tests
 {
@@ -2494,7 +2495,7 @@ namespace YesSql.Tests
 
 
         [Fact]
-        public async Task ShouldQueryByMappedIndex()
+        public async Task ShouldQueryByMappedIndexExpression()
         {
             _store.RegisterIndexes<PersonIndexProvider>();
 
@@ -2518,29 +2519,7 @@ namespace YesSql.Tests
 
             using (var session = _store.CreateSession())
             {
-                // Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>().CountAsync());
-
-
-
-                //                 var parameter = Expression.Parameter(typeof(PersonByName), "SomeName");
-
-                //                 // ParameterExpression x = Expression.Parameter(typeof(string), "x");
-
-                //             //     var body = 
-
-                //                 Expression body = Expression.Call(
-                //                     parameter,
-                //                     typeof(string).GetMethod("Contains", new[] { typeof(string) })!,
-                //                     Expression.Constant("Steve")
-                //                 );
-
-                // Expression<Func<PersonByName, bool>> expr = Expression.Lambda<Func<PersonByName, bool>>(body, parameter);
-
-                //     var constant = Expression.Constant("Steve");
-                //     var equal = Expression.Equal(parameter, constant);
-
                 var indexType = typeof(PersonByName);
-
 
                 PropertyInfo propertyName = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
                 MethodInfo containsMethod = typeof(string).GetMethod("Contains", new[] { typeof(string) })!;
@@ -2584,11 +2563,10 @@ namespace YesSql.Tests
             }
         }
 
-        [Fact]
-        public async Task ShouldOrderByMappedIndex()
+
+        private void CreateSearchData()
         {
             _store.RegisterIndexes<PersonIndexProvider>();
-
             using (var session = _store.CreateSession())
             {
                 var bill = new Person
@@ -2605,270 +2583,191 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(steve);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-
-                var indexType = typeof(PersonByName);
-
-
-                PropertyInfo propertyName = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
-
-                ParameterExpression parameter = Expression.Parameter(indexType);
-                // MemberExpression propertyExpression = Expression.Property(parameter, propertyName);
-
-                Expression orderByProperty = Expression.Property(parameter, propertyName);
-
-                var orderByExpression = Expression.Lambda<Func<PersonByName, object>>(orderByProperty, parameter);
-
-                var results = await session.Query().For<Person>()
-                    .With<PersonByName>(x => x.SomeName == "Bob" || x.SomeName == "Steve")
-                    .With<PersonByName>() // the second is necesary if we are on multiple tables, and another table has been linked
-                        .OrderByDescending(x => x.SomeName).ListAsync();
-
-
-                Assert.Equal("Steve", results.FirstOrDefault().Firstname);
-
-                var results2 = await session.Query().For<Person>()
-                    .With<PersonByName>(x => x.SomeName == "Bob" || x.SomeName == "Steve")
-                    .With<PersonByName>() // the second is necesary if we are on multiple tables, and another table has been linked
-                        .OrderByDescending(orderByExpression).ListAsync();
-
-                Assert.Equal("Steve", results2.FirstOrDefault().Firstname);
             }
         }
 
         [Fact]
-        public async Task ShouldQuerySearchExpressionByMappedIndex()
+        public async Task ShouldQuerySearchStatementDefaultContains()
         {
-            _store.RegisterIndexes<PersonIndexProvider>();
+            CreateSearchData();
 
             using (var session = _store.CreateSession())
             {
-                var bill = new Person
-                {
-                    Firstname = "Bill",
-                    Lastname = "Gates",
-                };
-
-                var steve = new Person
-                {
-                    Firstname = "Steve",
-                    Lastname = "Balmer"
-                };
-
-                session.Save(bill);
-                session.Save(steve);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var statement = new SearchStatement
-                (
-                    new TextSpan("sn"),
-                    new List<StatementExpression>
+                var statementList = new StatementList(
+                    new List<SearchStatement>
                     {
-                        new SearchWhereStatement
-                        (
-                            new SearchAndExpression
-                            (
-                                new SearchContainsExpression(new SearchValue(new TextSpan("Steve"))),
-                                new SearchNotContainsExpression(new SearchValue(new TextSpan("Bill")))
+                        new DefaultFilterStatement(
+                            new UnaryFilterExpression(
+                                new ContainsOperator(),
+                                new SearchValue(new TextSpan("Steve"))
                             )
                         )
-                    }
-                );
+                    });
 
+                var propertyInfo = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
 
-                // var indexType = typeof(PersonByName);
+                var context = new StatementContext<Person, PersonByName>
+                {
+                    Query = session.Query().For<Person>().With<PersonByName>(),
+                    DefaultPropertyInfo = propertyInfo,
+                    StatementList = statementList
+                };
 
-                // PropertyInfo propertyName = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
-                // MethodInfo containsMethod = typeof(string).GetMethod("Contains", new[] { typeof(string) })!;
+                var visitor = new YesSqlStatementVisitor<Person, PersonByName>(context);
 
-                // ParameterExpression parameter = Expression.Parameter(indexType);
-                // MemberExpression propertyExpression = Expression.Property(parameter, propertyName);
+                visitor.Visit();
 
-                // var name = "Steve";
+                // Normal yesql query
+                Assert.Equal("Steve", (await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve")).FirstOrDefaultAsync()).Firstname);
 
-                // ConstantExpression value = Expression.Constant(name);
-
-                // Expression containsBody = Expression.Call(
-                //     propertyExpression,
-                //     containsMethod,
-                //     value
-                // );
-
-                // var containsExpression = Expression.Lambda<Func<PersonByName, bool>>(containsBody, parameter);
-
-                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, "SomeName").CountAsync());
-
+                // Built query.
+                Assert.Equal("Steve", (await context.Query.FirstOrDefaultAsync()).Firstname);
             }
         }
 
 
         [Fact]
-        public async Task ShouldQuerySearchAndExpression()
+        public async Task ShouldQuerySearchStatementPropertyContains()
         {
-            _store.RegisterIndexes<PersonIndexProvider>();
+            CreateSearchData();
 
             using (var session = _store.CreateSession())
             {
-                var bill = new Person
-                {
-                    Firstname = "Bill",
-                    Lastname = "Gates",
-                };
-
-                var steve = new Person
-                {
-                    Firstname = "Steve",
-                    Lastname = "Balmer"
-                };
-
-                session.Save(bill);
-                session.Save(steve);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var statement = new SearchStatement
-                (
-                    new TextSpan("sn"),
-                    new List<StatementExpression>
+                var statementList = new StatementList(
+                    new List<SearchStatement>
                     {
-                        new SearchWhereStatement
-                        (
-                            new SearchAndExpression(
-                                new SearchContainsExpression(new SearchValue(new TextSpan("Steve"))),
-                                new SearchNotContainsExpression(new SearchValue(new TextSpan("Bill")))
+                        new PropertyFilterStatement(
+                            new TextSpan("name"),
+                            new UnaryFilterExpression(
+                                new ContainsOperator(),
+                                new SearchValue(new TextSpan("Steve"))
                             )
                         )
-                    }
-                );
+                    });
 
-                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve") && x.SomeName.NotContains("Bill")).CountAsync());
+                var propertyInfo = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
 
-                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, "SomeName").CountAsync());
+                var context = new StatementContext<Person, PersonByName>
+                {
+                    Query = session.Query().For<Person>().With<PersonByName>(),
+                    DefaultPropertyInfo = propertyInfo,
+                    PropertyInfo = new Dictionary<TextSpan, PropertyInfo>
+                    {
+                        { new TextSpan("name"), propertyInfo }
+                    },
+                    StatementList = statementList
+                };
+
+                var visitor = new YesSqlStatementVisitor<Person, PersonByName>(context);
+
+                visitor.Visit();
+
+                // Normal yesql query
+                Assert.Equal("Steve", (await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve")).FirstOrDefaultAsync()).Firstname);
+
+                // Built query.
+                Assert.Equal("Steve", (await context.Query.FirstOrDefaultAsync()).Firstname);
+            }
+        }
+
+        [Fact]
+        public async Task ShouldQuerySearchStatementOrContains()
+        {
+            CreateSearchData();
+
+            using (var session = _store.CreateSession())
+            {
+                var statementList = new StatementList(
+                    new List<SearchStatement>
+                    {
+                        new DefaultFilterStatement(
+                            new OrFilterExpression(
+                                new UnaryFilterExpression(
+                                    new ContainsOperator(),
+                                    new SearchValue(new TextSpan("Steve"))
+                                ),
+                                new UnaryFilterExpression(
+                                    new ContainsOperator(),
+                                    new SearchValue(new TextSpan("Bill"))
+                                ),
+                                "OR"
+                            )
+                        )
+                    });
+
+                var propertyInfo = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
+
+                var context = new StatementContext<Person, PersonByName>
+                {
+                    Query = session.Query().For<Person>().With<PersonByName>(),
+                    DefaultPropertyInfo = propertyInfo,
+                    StatementList = statementList
+                };
+
+                var visitor = new YesSqlStatementVisitor<Person, PersonByName>(context);
+
+                visitor.Visit();
+
+                // Normal yesql query
+                Assert.Equal(2, (await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve") || x.SomeName.Contains("Bill")).CountAsync()));
+
+                // Built query.
+                Assert.Equal(2, await context.Query.CountAsync());
             }
         }
 
 
         [Fact]
-        public async Task ShouldQuerySearchOrExpression()
+        public async Task ShouldQuerySearchStatementOrderDescending()
         {
-            _store.RegisterIndexes<PersonIndexProvider>();
+            CreateSearchData();
 
             using (var session = _store.CreateSession())
             {
-                var bill = new Person
-                {
-                    Firstname = "Bill",
-                    Lastname = "Gates",
-                };
-
-                var steve = new Person
-                {
-                    Firstname = "Steve",
-                    Lastname = "Balmer"
-                };
-
-                session.Save(bill);
-                session.Save(steve);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var statement = new SearchStatement(
-                    new TextSpan("sn"),
-                    new List<StatementExpression>
+                var statementList = new StatementList(
+                    new List<SearchStatement>
                     {
-                        new SearchWhereStatement
-                        (
-                            new SearchOrExpression
-                            (
-                                new SearchContainsExpression(new SearchValue(new TextSpan("Steve"))),
-                                new SearchContainsExpression(new SearchValue(new TextSpan("Bill")))
-                            )
+                        new SortStatement(
+                            new SearchValue(new TextSpan("name")),
+                            new SortDescending()
                         )
-                    }
-                );
+                    });
 
-                Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Bill") || x.SomeName.Contains("Steve")).CountAsync());
+                var propertyInfo = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
 
-                Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, "SomeName").CountAsync());
-            }
-        }
-
-        [Fact]
-        public async Task ShouldQuerySearchOrderExpression()
-        {
-            _store.RegisterIndexes<PersonIndexProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var bill = new Person
+                var context = new StatementContext<Person, PersonByName>
                 {
-                    Firstname = "Bill",
-                    Lastname = "Gates",
-                };
-
-                var steve = new Person
-                {
-                    Firstname = "Steve",
-                    Lastname = "Balmer"
-                };
-
-                session.Save(bill);
-                session.Save(steve);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var statement = new SearchStatement(
-                    new TextSpan("sn"),
-                    new List<StatementExpression>
+                    Query = session.Query().For<Person>().With<PersonByName>(),
+                    PropertyInfo = new Dictionary<TextSpan, PropertyInfo>
                     {
-                        new SearchWhereStatement
-                        (
-                            new SearchOrExpression
-                            (
-                                new SearchContainsExpression(new SearchValue(new TextSpan("Steve"))),
-                                new SearchContainsExpression(new SearchValue(new TextSpan("Bill")))
-                            )
-                        ),
-                        new SearchOrderDescendingStatement
-                        (
-                            new SearchOrderExpression()
-                        )
-                    }
-                );
+                        { new TextSpan("name"), propertyInfo }
+                    },
+                    StatementList = statementList
+                };
 
-                var normalQuery = session.Query().For<Person>().With<PersonByName>(x => x.SomeName == "Steve" || x.SomeName == "Bill");
+                var visitor = new YesSqlStatementVisitor<Person, PersonByName>(context);
 
-                Assert.Equal(2, await normalQuery.CountAsync());
+                visitor.Visit();
 
-                var results = await normalQuery
-                    .With<PersonByName>() // the second is necesary if we are on multiple tables, and another table has been linked
-                        .OrderByDescending(x => x.SomeName).ListAsync();
+                Assert.Equal("Steve", (await session.Query<Person>().With<PersonByName>().OrderByDescending(x => x.SomeName).FirstOrDefaultAsync()).Firstname);
+                Assert.Equal("Bill", (await session.Query<Person>().With<PersonByName>().OrderBy(x => x.SomeName).FirstOrDefaultAsync()).Firstname);
 
-                Assert.Equal("Steve", results.FirstOrDefault().Firstname);
-
-                var statementQuery = session.Query().For<Person>().With<PersonByName>().WithStatement(statement, x => x.SomeName);
-
-                var searchResults = await statementQuery.ListAsync();
+                var searchResults = await context.Query.ListAsync();
                 Assert.Equal("Steve", searchResults.FirstOrDefault().Firstname);
             }
         }
 
-
         [Fact]
-        public async Task ShouldQuerySearchNotContains()
+        public async Task ShouldQuerySearchStatementOrderAscending()
         {
             _store.RegisterIndexes<PersonIndexProvider>();
-
             using (var session = _store.CreateSession())
-            {
+            {        
+                var paul = new Person
+                {
+                    Firstname = "Paul",
+                    Lastname = "Allen",
+                };
                 var bill = new Person
                 {
                     Firstname = "Bill",
@@ -2881,30 +2780,44 @@ namespace YesSql.Tests
                     Lastname = "Balmer"
                 };
 
+                session.Save(paul);
                 session.Save(bill);
                 session.Save(steve);
             }
 
             using (var session = _store.CreateSession())
             {
-                var statement = new SearchStatement(
-                    new TextSpan("sn"),
-                    new List<StatementExpression>
+                var statementList = new Search.StatementList(
+                    new List<SearchStatement>
                     {
-                        new SearchWhereStatement
-                        (
-                            new SearchNotContainsExpression(new SearchValue(new TextSpan("Steve")))
+                        new SortStatement(
+                            new SearchValue(new TextSpan("name")),
+                            new SortAscending("asc")
                         )
-                    }
-                );
+                    });
 
                 var propertyInfo = typeof(PersonByName).GetProperties().FirstOrDefault(x => x.Name == "SomeName");
 
-                Assert.Equal("Bill", (await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, propertyInfo).FirstOrDefaultAsync()).Firstname);
+                var context = new StatementContext<Person, PersonByName>
+                {
+                    Query = session.Query().For<Person>().With<PersonByName>(),
+                    PropertyInfo = new Dictionary<TextSpan, PropertyInfo>
+                    {
+                        { new TextSpan("name"), propertyInfo }
+                    },
+                    StatementList = statementList
+                };
 
-                Assert.Equal("Bill", (await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, x => x.SomeName).FirstOrDefaultAsync()).Firstname);
+                var visitor = new YesSqlStatementVisitor<Person, PersonByName>(context);
 
-                Assert.Equal("Bill", (await session.Query().For<Person>().With<PersonByName>().WithStatement(statement, "SomeName").FirstOrDefaultAsync()).Firstname);
+                visitor.Visit();
+
+                Assert.Equal(3, await session.Query<Person>().With<PersonByName>().CountAsync());
+                Assert.Equal("Paul", (await session.Query<Person>().With<PersonByName>().FirstOrDefaultAsync()).Firstname);
+                Assert.Equal("Bill", (await session.Query<Person>().With<PersonByName>().OrderBy(x => x.SomeName).FirstOrDefaultAsync()).Firstname);
+
+                var searchResults = await context.Query.ListAsync();
+                Assert.Equal("Bill", searchResults.FirstOrDefault().Firstname);
             }
         }
 
