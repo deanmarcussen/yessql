@@ -12,9 +12,9 @@ namespace YesSql.Tests.Search
     // The idea is Statement applies something. Expression returns something.
 
     public abstract class SearchStatement
-    { 
+    {
 
-        public abstract void Accept(IStatementVisitor visitor);
+        public abstract TResult Accept<TArgument, TResult>(IStatementVisitor<TArgument, TResult> visitor, TArgument argument);
     }
 
     public class DefaultFilterStatement : SearchStatement
@@ -26,8 +26,8 @@ namespace YesSql.Tests.Search
 
         public FilterExpression Expression { get; }
 
-        public override void Accept(IStatementVisitor visitor)
-            => visitor.VisitDefaultFilterStatement(this);
+        public override TResult Accept<TArgument, TResult>(IStatementVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitDefaultFilterStatement(this, argument);
 
         public override string ToString()
             => Expression.ToString();
@@ -35,37 +35,46 @@ namespace YesSql.Tests.Search
 
     public class PropertyFilterStatement : SearchStatement
     {
-        public PropertyFilterStatement(TextSpan name, FilterExpression expression)
+        public PropertyFilterStatement(string name, FilterExpression expression)
         {
             Name = name;
             Expression = expression;
         }
 
-        public TextSpan Name { get; }
+        public string Name { get; }
         public FilterExpression Expression { get; }
 
-        public override void Accept(IStatementVisitor visitor)
-            => visitor.VisitPropertyFilterStatement(this);
+        public override TResult Accept<TArgument, TResult>(IStatementVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitPropertyFilterStatement(this, argument);
 
         public override string ToString()
-            => $"{Name.ToString()}: {Expression.ToString()}";
+            => $"{Name}: {Expression.ToString()}";
     }
 
     public class SortStatement : SearchStatement
     {
-        public SortStatement(SearchValue propertyName, SortOperator sort)
+        public SortStatement(SearchValue propertyName, SortExpression sort)
         {
             PropertyName = propertyName;
             Sort = sort;
         }
 
         public SearchValue PropertyName { get; }
-        public SortOperator Sort { get; }
+        public SortExpression Sort { get; }
 
-        public override void Accept(IStatementVisitor visitor)
-            => visitor.VisitSortStatement(this);
+        public override TResult Accept<TArgument, TResult>(IStatementVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitSortStatement(this, argument);
 
         public override string ToString()
             => $"sort:{PropertyName.ToString()}{Sort.ToString()}";
+    }
+
+    public class DefaultSortStatement : SortStatement
+    {
+        public DefaultSortStatement(SearchValue propertyName, SortExpression sort) : base(propertyName, sort)
+        { }
+
+        public override TResult Accept<TArgument, TResult>(IStatementVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitDefaultSortStatement(this, argument);
     }
 }

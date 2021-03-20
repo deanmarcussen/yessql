@@ -11,18 +11,15 @@ namespace YesSql.Tests.Search
 {
     public class SearchValue
     {
-        public SearchValue(TextSpan value)
+        public SearchValue(string value)
         {
             Value = value;
         }
 
-        public TextSpan Value { get; }
+        public string Value { get; }
 
         public TResult Accept<TResult>(IValueVisitor<TResult> visitor)
             => visitor.VisitValue(this);
-
-        public override string ToString()
-            => Value.ToString();
     }
 
     public abstract class SearchOperator
@@ -62,7 +59,7 @@ namespace YesSql.Tests.Search
 
     public abstract class FilterExpression 
     {
-        public abstract TResult Accept<TArgument, TResult>(IExpressionVisitor<TArgument, TResult> visitor, TArgument argument);
+        public abstract TResult Accept<TArgument, TResult>(IFilterExpressionVisitor<TArgument, TResult> visitor, TArgument argument);
     }
 
     public class UnaryFilterExpression : FilterExpression
@@ -76,7 +73,7 @@ namespace YesSql.Tests.Search
         public SearchOperator Operation { get; }
         public SearchValue Value { get; set; }
 
-        public override TResult Accept<TArgument, TResult>(IExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
+        public override TResult Accept<TArgument, TResult>(IFilterExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
             => visitor.VisitUnaryFilterExpression(this, argument);
 
         public override string ToString()
@@ -94,7 +91,7 @@ namespace YesSql.Tests.Search
         public FilterExpression Left { get; }
         public FilterExpression Right { get; }
 
-        public override TResult Accept<TArgument, TResult>(IExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
+        public override TResult Accept<TArgument, TResult>(IFilterExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
             => visitor.VisitAndFilterExpression(this, argument);
 
         public override string ToString()
@@ -114,15 +111,19 @@ namespace YesSql.Tests.Search
         public FilterExpression Left { get; }
         public FilterExpression Right { get; }
 
-        public override TResult Accept<TArgument, TResult>(IExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
+        public override TResult Accept<TArgument, TResult>(IFilterExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
             => visitor.VisitOrFilterExpression(this, argument);
 
         public override string ToString()
             => $"{Left.ToString()} {Value} {Right.ToString()}";
     }
 
-    public abstract class SortOperator : FilterExpression { }
-    public class SortAscending : SortOperator
+    public abstract class SortExpression 
+    {
+        public abstract TResult Accept<TArgument, TResult>(ISortExpressionVisitor<TArgument, TResult> visitor, TArgument argument);
+    }
+
+    public class SortAscending : SortExpression
     {
         public SortAscending(string value)
         {
@@ -131,30 +132,24 @@ namespace YesSql.Tests.Search
 
         public bool HasValue { get; }
 
-        public override TResult Accept<TArgument, TResult>(IExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
+        public override TResult Accept<TArgument, TResult>(ISortExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
             => visitor.VisitSortAscending(this, argument);
 
         public override string ToString()
             => HasValue ? "-asc" : String.Empty;
     }
 
-    public class SortDescending : SortOperator
+    public class SortDescending : SortExpression
     {
-        public override TResult Accept<TArgument, TResult>(IExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
+        public override TResult Accept<TArgument, TResult>(ISortExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
             => visitor.VisitSortDescending(this, argument);
 
         public override string ToString()
             => "-desc";
     }
 
-    // The idea is Statement applies something. Expression returns something.
 
- 
-
-
-    // Final output.
-
-    public class StatementList // Maybe? maybe not.
+    public class StatementList
     {
         public StatementList(List<SearchStatement> statements)
         {
@@ -162,6 +157,12 @@ namespace YesSql.Tests.Search
         }
 
         public List<SearchStatement> Statements { get; }
+
+        /// <summary>
+        /// Indicates to the search processing context that a order statement has already been applied
+        /// and that it should use ThenBy for the next statement.
+        /// <summary>
+        public bool HasOrder { get; set; }
 
         public override string ToString()
             => $"{String.Join("+", Statements.Select(s => s.ToString()))}";

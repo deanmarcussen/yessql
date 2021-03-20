@@ -89,16 +89,16 @@ namespace YesSql.Tests.Search
             var AscendingOperator = ZeroOrOne(
                     Literals.Text("-").SkipAnd(Literals.Text("asc", caseInsensitive: true))
                 )
-                .Then<SortOperator>(static x => new SortAscending(x));
+                .Then<SortExpression>(static x => new SortAscending(x));
 
             var DescendingOperator = Literals.Text("-desc", caseInsensitive: true)
                 .Or(Literals.Text("-dsc", caseInsensitive: true))
-                    .Then<SortOperator>(static x => new SortDescending());
+                    .Then<SortExpression>(static x => new SortDescending());
 
             var SortOperator = DescendingOperator.Or(AscendingOperator);
 
             var SortValue = AnyCharBefore(Literals.Char('-'))
-                .Then(static x => new SearchValue(x));
+                .Then(static x => new SearchValue(x.ToString()));
 
             // Order only supports value. -asc or -desc -dsc are optional modifiers.
             var SortStatement = Terms.Text("sort", caseInsensitive: true)
@@ -134,7 +134,7 @@ namespace YesSql.Tests.Search
             Value.Parser = Terms.String()
                 .Or(
                     AnyCharBefore(SeperatorOrOperator) // quick hack.
-                ).Then(static x => new SearchValue(x));
+                ).Then(static x => new SearchValue(x.ToString()));
 
             var UnaryFilter = OperatorAndValue.Or(
                 Value
@@ -170,7 +170,7 @@ namespace YesSql.Tests.Search
                 .And(
                     BinaryOrUnaryFilter
                 )
-                    .Then<SearchStatement>(static x => new PropertyFilterStatement(x.Item1, x.Item2));
+                    .Then<SearchStatement>(static x => new PropertyFilterStatement(x.Item1.ToString(), x.Item2));
 
             var DefaultFilterStatement = BinaryOrUnaryFilter
                 .Then<SearchStatement>(static x => new DefaultFilterStatement(x));
