@@ -5,7 +5,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using YesSql.Indexes;
 
-namespace YesSql.Tests.Search
+namespace YesSql.Search
 {
     public class QueryIndexContext<TDocument, TIndex>
         where TDocument : class where TIndex : class, IIndex
@@ -30,7 +30,16 @@ namespace YesSql.Tests.Search
             string name, Expression<Func<TIndex, object>> predicate,
             Func<IQuery<TDocument, TIndex>, Expression<Func<TIndex, bool>>, IQuery<TDocument, TIndex>> filter = null
         ) where TDocument : class where TIndex : class, IIndex
-            => context.AddFilter(name, ((MemberExpression)predicate.Body).Member.Name, filter);
+        {
+            if (predicate.Body is UnaryExpression unary)
+            {
+                return context.AddFilter(name, ((MemberExpression)unary.Operand).Member.Name);
+            }
+            else
+            {
+                return context.AddFilter(name, ((MemberExpression)predicate.Body).Member.Name);
+            }
+        }
 
         public static QueryIndexContext<TDocument, TIndex> AddFilter<TDocument, TIndex>(
             this QueryIndexContext<TDocument, TIndex> context,
@@ -49,7 +58,7 @@ namespace YesSql.Tests.Search
         )
             where TDocument : class where TIndex : class, IIndex
         {
-            context.Filters[name] = new QueryIndexFilterMap<TDocument, TIndex>(propertyInfo, filter);;
+            context.Filters[name] = new QueryIndexFilterMap<TDocument, TIndex>(propertyInfo, filter); ;
 
             return context;
         }
@@ -63,7 +72,7 @@ namespace YesSql.Tests.Search
             string name
         )
             where TDocument : class where TIndex : class, IIndex
-        {                
+        {
             if (context.DefaultFilter != null)
             {
                 throw new InvalidOperationException("The default filter has already been set.");
@@ -75,15 +84,25 @@ namespace YesSql.Tests.Search
             }
 
             context.DefaultFilter = filterMap;
-            
+
             return context;
         }
 
         public static QueryIndexContext<TDocument, TIndex> AddSort<TDocument, TIndex>(
-                   this QueryIndexContext<TDocument, TIndex> context,
-                   string name, Expression<Func<TIndex, object>> predicate
-               ) where TDocument : class where TIndex : class, IIndex
-                   => context.AddSort(name, ((MemberExpression)predicate.Body).Member.Name);
+            this QueryIndexContext<TDocument, TIndex> context,
+            string name, 
+            Expression<Func<TIndex, object>> predicate
+        ) where TDocument : class where TIndex : class, IIndex
+        {
+            if (predicate.Body is UnaryExpression unary)
+            {
+                return context.AddSort(name, ((MemberExpression)unary.Operand).Member.Name);
+            }
+            else
+            {
+                return context.AddSort(name, ((MemberExpression)predicate.Body).Member.Name);
+            }
+        }
 
         public static QueryIndexContext<TDocument, TIndex> AddSort<TDocument, TIndex>(
             this QueryIndexContext<TDocument, TIndex> context,
@@ -123,7 +142,7 @@ namespace YesSql.Tests.Search
             context.StatementList.Statements.Add(defaultSortStatement);
 
             return context;
-        }        
+        }
     }
 
     public class QueryIndexFilterMap<TDocument, TIndex> where TDocument : class where TIndex : class, IIndex

@@ -7,7 +7,7 @@ using System.Reflection;
 using YesSql.Indexes;
 using YesSql.Services;
 
-namespace YesSql.Tests.Search
+namespace YesSql.Search
 {
 
     public interface IValueVisitor<TResult>

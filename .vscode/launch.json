@@ -12,7 +12,7 @@
 			"type": "coreclr",
 			"request": "launch",
 			"preLaunchTask": "Dotnet Build Debug",
-			"program": "${workspaceRoot}/samples/YesSql.Samples.Hi/bin/Debug/netstandardapp1.5/win7-x64/YesSql.Samples.Hi.exe",
+			"program": "${workspaceRoot}/samples/YesSql.Samples.Hi/bin/Debug/netcoreapp3.1/YesSql.Samples.Hi.dll",
 			"args": [],
 			"cwd": "${workspaceRoot}/samples/YesSql.Samples.Hi",
 			"stopAtEntry": false
@@ -22,7 +22,7 @@
 			"type": "coreclr",
 			"request": "launch",
 			"preLaunchTask": "Dotnet Build Debug",
-			"program": "${workspaceRoot}/samples/YesSql.Samples.Performance/bin/Debug/netstandardapp1.5/win7-x64/YesSql.Samples.Performance.exe",
+			"program": "${workspaceRoot}/samples/YesSql.Samples.Performance/bin/Debug/netcoreapp3.1/YesSql.Samples.Performance.dll",
 			"args": [],
 			"cwd": "${workspaceRoot}/samples/YesSql.Samples.Performance",
 			"stopAtEntry": false
@@ -32,9 +32,19 @@
 			"type": "coreclr",
 			"request": "launch",
 			"preLaunchTask": "Dotnet Build Debug",
-			"program": "${workspaceRoot}/samples/YesSql.Samples.FullText/bin/Debug/netstandardapp1.5/win7-x64/YesSql.Samples.FullText.exe",
+			"program": "${workspaceRoot}/samples/YesSql.Samples.FullText/bin/Debug/netcoreapp3.1/YesSql.Samples.FullText.dll",
 			"args": [],
 			"cwd": "${workspaceRoot}/samples/YesSql.Samples.FullText",
+			"stopAtEntry": false
+		},
+		{
+			"name": ".NET Core Launch (Samples.Web)",
+			"type": "coreclr",
+			"request": "launch",
+			"preLaunchTask": "Dotnet Build Web Debug",
+			"program": "${workspaceRoot}/samples/YesSql.Samples.Web/bin/Debug/net5.0/YesSql.Samples.Web.dll",
+			"args": [],
+			"cwd": "${workspaceRoot}/samples/YesSql.Samples.Web",
 			"stopAtEntry": false
 		},
 		{
@@ -42,7 +52,7 @@
 			"type": "coreclr",
 			"request": "launch",
 			"preLaunchTask": "Dotnet Build Debug",
-			"program": "${workspaceRoot}/samples/YesSql.Bench/bin/Debug/netstandardapp1.5/win7-x64/YesSql.Bench.exe",
+			"program": "${workspaceRoot}/samples/YesSql.Bench/bin/Debug/netcoreapp3.1/YesSql.Bench.dll",
 			"args": [],
 			"cwd": "${workspaceRoot}/samples/YesSql.Bench",
 			"stopAtEntry": false

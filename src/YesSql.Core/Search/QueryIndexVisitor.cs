@@ -6,16 +6,15 @@ using System.Linq.Expressions;
 using System.Reflection;
 using YesSql.Indexes;
 using YesSql.Services;
-using YesSql.Tests.Indexes;
 
-namespace YesSql.Tests.Search
+namespace YesSql.Search
 {
-    public struct QueryIndexExpressionArgument<TDocument, TIndex> where TDocument : class where TIndex : class, IIndex
+    public interface IQueryIndexVisitor<TDocument, TIndex> where TDocument : class where TIndex : class, IIndex
     {
-        public MemberExpression MemberExpression { get; set; }
-        public QueryIndexContext<TDocument, TIndex> Context { get; set; }
-
+        IQuery<TDocument, TIndex> Query(QueryIndexContext<TDocument, TIndex> context);
     }
+
+
     /// <summary>
     /// Takes a list of statements and applies them to a query.
     /// <summary>
@@ -23,8 +22,9 @@ namespace YesSql.Tests.Search
         IStatementVisitor<QueryIndexContext<TDocument, TIndex>, QueryIndexContext<TDocument, TIndex>>,
         IFilterExpressionVisitor<QueryIndexExpressionArgument<TDocument, TIndex>, Expression>,
         ISortExpressionVisitor<QueryIndexExpressionArgument<TDocument, TIndex>, QueryIndexContext<TDocument, TIndex>>,
-        IOperatorVisitor<MethodInfo>,
-        IValueVisitor<ConstantExpression>
+        IOperatorVisitor<QueryOperationArgument<TDocument, TIndex>, Expression>,
+        IValueVisitor<ConstantExpression>,
+        IQueryIndexVisitor<TDocument, TIndex>
         where TDocument : class where TIndex : class, IIndex
     {
         private static readonly MethodInfo _containsMethod = typeof(string).GetMethod("Contains", new[] { typeof(string) })!;
@@ -44,7 +44,7 @@ namespace YesSql.Tests.Search
             _parameter = Expression.Parameter(typeof(TIndex));
         }
 
-        public IQuery<TDocument, TIndex> Visit(QueryIndexContext<TDocument, TIndex> context)
+        public IQuery<TDocument, TIndex> Query(QueryIndexContext<TDocument, TIndex> context)
         {
             foreach (var statement in context.StatementList.Statements)
             {
@@ -86,7 +86,7 @@ namespace YesSql.Tests.Search
             return context;
         }
 
-        public QueryIndexContext<TDocument, TIndex> VisitPropertyFilterStatement(PropertyFilterStatement statement, QueryIndexContext<TDocument, TIndex> context)
+        public QueryIndexContext<TDocument, TIndex> VisitFieldFilterStatement(FieldFilterStatement statement, QueryIndexContext<TDocument, TIndex> context)
         {
             if (!context.Filters.TryGetValue(statement.Name, out var filterMap))
             {
@@ -147,11 +147,16 @@ namespace YesSql.Tests.Search
         }
 
         Expression IFilterExpressionVisitor<QueryIndexExpressionArgument<TDocument, TIndex>, Expression>.VisitUnaryFilterExpression(UnaryFilterExpression expression, QueryIndexExpressionArgument<TDocument, TIndex> argument)
-            => Expression.Call(
-                argument.MemberExpression,
-                expression.Operation.Accept(this), // This is method info here. can it be method info expression? // apparently not!
-                expression.Value.Accept(this)
-            );
+        {
+            var operationArgument = new QueryOperationArgument<TDocument, TIndex>
+            {
+                FilterExpression = expression,
+                QueryIndexArgument = argument
+
+            };
+
+            return expression.Operation.Accept(this, operationArgument);
+        }
 
         Expression IFilterExpressionVisitor<QueryIndexExpressionArgument<TDocument, TIndex>, Expression>.VisitAndFilterExpression(AndFilterExpression expression, QueryIndexExpressionArgument<TDocument, TIndex> argument)
             => Expression.AndAlso(
@@ -165,19 +170,49 @@ namespace YesSql.Tests.Search
                 expression.Right.Accept(this, argument)
             );
 
-        MethodInfo IOperatorVisitor<MethodInfo>.VisitContainsOperator(ContainsOperator op)
-            => _containsMethod;
+        public Expression VisitMatchOperator(MatchOperator op, QueryOperationArgument<TDocument, TIndex> argument)
+        {
+            if (argument.QueryIndexArgument.MemberExpression.Type == typeof(string))
+            {
+                return Expression.Call(
+                    argument.QueryIndexArgument.MemberExpression,
+                    _containsMethod,
+                    argument.FilterExpression.Value.Accept(this)
+                );
+            }
+            else
+            {
+                return Expression.Equal(argument.QueryIndexArgument.MemberExpression, Expression.Constant(true));
+            }
+        }
 
-        MethodInfo IOperatorVisitor<MethodInfo>.VisitNotContainsOperator(NotContainsOperator op)
-            => _notContainsMethod;
+        public Expression VisitNotMatchOperator(NotMatchOperator op, QueryOperationArgument<TDocument, TIndex> argument)
+        {
+            // TODO dates etc. But one would expect them to be > < operators.
+            if (argument.QueryIndexArgument.MemberExpression.Type == typeof(string))
+            {
+                return Expression.Call(
+                    argument.QueryIndexArgument.MemberExpression,
+                    _notContainsMethod,
+                    argument.FilterExpression.Value.Accept(this)
+                );
+            }
+            else
+            {
+                return Expression.Equal(argument.QueryIndexArgument.MemberExpression, Expression.Constant(false));
+            }
+        }
 
         ConstantExpression IValueVisitor<ConstantExpression>.VisitValue(SearchValue value)
-            => Expression.Constant(value.Value.ToString());
-
+            => Expression.Constant(value.Value);
 
         public QueryIndexContext<TDocument, TIndex> VisitSortAscending(SortAscending expression, QueryIndexExpressionArgument<TDocument, TIndex> argument)
         {
-            var orderByExpression = Expression.Lambda<Func<TIndex, object>>(argument.MemberExpression, _parameter);
+            var orderByExpression = Expression.Lambda<Func<TIndex, object>>(
+                Expression.Convert(argument.MemberExpression, typeof(object)),
+                _parameter
+            );
+
             if (argument.Context.StatementList.HasOrder)
             {
                 argument.Context.Query = _defaultThenBy.Invoke(argument.Context.Query, orderByExpression);
@@ -193,7 +228,10 @@ namespace YesSql.Tests.Search
 
         public QueryIndexContext<TDocument, TIndex> VisitSortDescending(SortDescending expression, QueryIndexExpressionArgument<TDocument, TIndex> argument)
         {
-            var orderByExpression = Expression.Lambda<Func<TIndex, object>>(argument.MemberExpression, _parameter);
+            var orderByExpression = Expression.Lambda<Func<TIndex, object>>(
+                Expression.Convert(argument.MemberExpression, typeof(object)),
+                _parameter
+            );
 
             if (argument.Context.StatementList.HasOrder)
             {
@@ -207,5 +245,17 @@ namespace YesSql.Tests.Search
 
             return argument.Context;
         }
+    }
+
+    public struct QueryIndexExpressionArgument<TDocument, TIndex> where TDocument : class where TIndex : class, IIndex
+    {
+        public MemberExpression MemberExpression { get; set; }
+        public QueryIndexContext<TDocument, TIndex> Context { get; set; }
+    }
+
+    public struct QueryOperationArgument<TDocument, TIndex> where TDocument : class where TIndex : class, IIndex
+    {
+        public UnaryFilterExpression FilterExpression { get; set; }
+        public QueryIndexExpressionArgument<TDocument, TIndex> QueryIndexArgument { get; set; }
     }
 }

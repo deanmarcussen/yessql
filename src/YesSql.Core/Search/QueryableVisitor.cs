@@ -6,16 +6,10 @@ using System.Linq.Expressions;
 using System.Reflection;
 using YesSql.Indexes;
 using YesSql.Services;
-using YesSql.Tests.Indexes;
 
-namespace YesSql.Tests.Search
+namespace YesSql.Search
 {
-    public struct QueryableExpressionArgument<TSource> 
-    {
-        public MemberExpression MemberExpression { get; set; }
-        public QueryableContext<TSource> Context { get; set; }
 
-    }
     /// <summary>
     /// Takes a list of statements and applies them to a query.
     /// <summary>
@@ -23,7 +17,7 @@ namespace YesSql.Tests.Search
         IStatementVisitor<QueryableContext<TSource>, QueryableContext<TSource>>,
         IFilterExpressionVisitor<QueryableExpressionArgument<TSource>, Expression>,
         ISortExpressionVisitor<QueryableExpressionArgument<TSource>, QueryableContext<TSource>>,
-        IOperatorVisitor<MethodInfo>,
+        IOperatorVisitor<QueryableOperationArgument<TSource>, Expression>,
         IValueVisitor<ConstantExpression>
     {
         private static readonly MethodInfo _containsMethod = typeof(string).GetMethod("Contains", new[] { typeof(string) })!;
@@ -35,7 +29,6 @@ namespace YesSql.Tests.Search
         private static readonly Func<IQueryable<TSource>, Expression<Func<TSource, object>>, IQueryable<TSource>> _defaultOrderByDescending = (query, e) => query.OrderByDescending(e);
         private static readonly Func<IOrderedQueryable<TSource>, Expression<Func<TSource, object>>, IQueryable<TSource>> _defaultThenBy = (query, e) => query.ThenBy(e);
         private static readonly Func<IOrderedQueryable<TSource>, Expression<Func<TSource, object>>, IQueryable<TSource>> _defaultThenByDescending = (query, e) => query.ThenByDescending(e);
-
 
         private readonly ParameterExpression _parameter;
 
@@ -86,7 +79,7 @@ namespace YesSql.Tests.Search
             return context;
         }
 
-        public QueryableContext<TSource> VisitPropertyFilterStatement(PropertyFilterStatement statement, QueryableContext<TSource> context)
+        public QueryableContext<TSource> VisitFieldFilterStatement(FieldFilterStatement statement, QueryableContext<TSource> context)
         {
             if (!context.Filters.TryGetValue(statement.Name, out var filterMap))
             {
@@ -147,11 +140,15 @@ namespace YesSql.Tests.Search
         }
 
         Expression IFilterExpressionVisitor<QueryableExpressionArgument<TSource>, Expression>.VisitUnaryFilterExpression(UnaryFilterExpression expression, QueryableExpressionArgument<TSource> argument)
-            => Expression.Call(
-                argument.MemberExpression,
-                expression.Operation.Accept(this), // This is method info here. can it be method info expression? // apparently not!
-                expression.Value.Accept(this)
-            );
+        {
+            var operationArgument = new QueryableOperationArgument<TSource>
+            {
+                FilterExpression = expression,
+                QueryableArgument = argument
+            };
+
+            return expression.Operation.Accept(this, operationArgument);
+        }
 
         Expression IFilterExpressionVisitor<QueryableExpressionArgument<TSource>, Expression>.VisitAndFilterExpression(AndFilterExpression expression, QueryableExpressionArgument<TSource> argument)
             => Expression.AndAlso(
@@ -165,11 +162,37 @@ namespace YesSql.Tests.Search
                 expression.Right.Accept(this, argument)
             );
 
-        MethodInfo IOperatorVisitor<MethodInfo>.VisitContainsOperator(ContainsOperator op)
-            => _containsMethod;
+        public Expression VisitMatchOperator(MatchOperator op, QueryableOperationArgument<TSource> argument)
+        {
+            if (argument.QueryableArgument.MemberExpression.Type == typeof(string))
+            {
+                return Expression.Call(
+                    argument.QueryableArgument.MemberExpression,
+                    _containsMethod,
+                    argument.FilterExpression.Value.Accept(this)
+                );
+            }
+            else
+            {
+                return Expression.Equal(argument.QueryableArgument.MemberExpression, Expression.Constant(true));
+            }
+        }
 
-        MethodInfo IOperatorVisitor<MethodInfo>.VisitNotContainsOperator(NotContainsOperator op)
-            => _notContainsMethod;
+        public Expression VisitNotMatchOperator(NotMatchOperator op, QueryableOperationArgument<TSource> argument)
+        {
+            if (argument.QueryableArgument.MemberExpression.Type == typeof(string))
+            {
+                return Expression.Call(
+                    argument.QueryableArgument.MemberExpression,
+                    _notContainsMethod,
+                    argument.FilterExpression.Value.Accept(this)
+                );
+            }
+            else
+            {
+                return Expression.Equal(argument.QueryableArgument.MemberExpression, Expression.Constant(false));
+            }
+        }        
 
         ConstantExpression IValueVisitor<ConstantExpression>.VisitValue(SearchValue value)
             => Expression.Constant(value.Value.ToString());
@@ -210,4 +233,16 @@ namespace YesSql.Tests.Search
             return argument.Context;
         }
     }
+
+    public struct QueryableExpressionArgument<TSource>
+    {
+        public MemberExpression MemberExpression { get; set; }
+        public QueryableContext<TSource> Context { get; set; }
+    }
+
+    public struct QueryableOperationArgument<TSource>
+    {
+        public UnaryFilterExpression FilterExpression { get; set; }
+        public QueryableExpressionArgument<TSource> QueryableArgument { get; set; }
+    }    
 }

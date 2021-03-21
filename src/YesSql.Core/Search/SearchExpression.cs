@@ -7,7 +7,7 @@ using System.Reflection;
 using YesSql.Indexes;
 using YesSql.Services;
 
-namespace YesSql.Tests.Search
+namespace YesSql.Search
 {
     public class SearchValue
     {
@@ -20,37 +20,36 @@ namespace YesSql.Tests.Search
 
         public TResult Accept<TResult>(IValueVisitor<TResult> visitor)
             => visitor.VisitValue(this);
+
+        public override string ToString()
+            => Value;
     }
 
     public abstract class SearchOperator
     {
-        public abstract TResult Accept<TResult>(IOperatorVisitor<TResult> visitor);
+        public abstract TResult Accept<TArgument, TResult>(IOperatorVisitor<TArgument, TResult> visitor, TArgument argument);
     }
 
-    public class ContainsOperator : SearchOperator
+    public class MatchOperator : SearchOperator
     {
-        private static readonly MethodInfo _containsMethod = typeof(string).GetMethod("Contains", new[] { typeof(string) })!;
-
-        public override TResult Accept<TResult>(IOperatorVisitor<TResult> visitor)
-            => visitor.VisitContainsOperator(this);
+        public override TResult Accept<TArgument, TResult>(IOperatorVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitMatchOperator(this, argument);
 
         public override string ToString()
             => String.Empty;
     }
 
-    public class NotContainsOperator : SearchOperator
+    public class NotMatchOperator : SearchOperator
     {
-        private static readonly MethodInfo _notContainsMethod = typeof(DefaultQueryExtensions).GetMethod("NotContains", new[] { typeof(string), typeof(string) })!;
-
-        public NotContainsOperator(string value)
+        public NotMatchOperator(string value)
         {
             Value = value;
         }
 
         public string Value { get; }
 
-        public override TResult Accept<TResult>(IOperatorVisitor<TResult> visitor)
-            => visitor.VisitNotContainsOperator(this);
+        public override TResult Accept<TArgument, TResult>(IOperatorVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitNotMatchOperator(this, argument);
 
         public override string ToString()
             => Value;
@@ -125,7 +124,7 @@ namespace YesSql.Tests.Search
 
     public class SortAscending : SortExpression
     {
-        public SortAscending(string value)
+        public SortAscending(string value = null)
         {
             HasValue = !String.IsNullOrEmpty(value);
         }
@@ -150,7 +149,12 @@ namespace YesSql.Tests.Search
 
 
     public class StatementList
-    {
+    {        
+        public StatementList()
+        {
+            Statements = new();
+        }
+
         public StatementList(List<SearchStatement> statements)
         {
             Statements = statements;
@@ -165,6 +169,6 @@ namespace YesSql.Tests.Search
         public bool HasOrder { get; set; }
 
         public override string ToString()
-            => $"{String.Join("+", Statements.Select(s => s.ToString()))}";
+            => $"{String.Join(" ", Statements.Select(s => s.ToString()))}";
     }
 }

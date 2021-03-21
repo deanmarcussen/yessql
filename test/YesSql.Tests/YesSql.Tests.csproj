@@ -17,7 +17,6 @@
         <AssemblyOriginatorKeyFile>../../src/YesSqlKey.snk</AssemblyOriginatorKeyFile>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="Parlot" Version="0.0.10" />
         <PackageReference Include="Microsoft.AspNetCore.Hosting" Version="2.2.7" />
         <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="2.2.0" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="15.8.0" />

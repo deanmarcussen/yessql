@@ -4,7 +4,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 
-namespace YesSql.Tests.Search
+namespace YesSql.Search
 {
     public class QueryableContext<TSource>
     {
@@ -28,7 +28,16 @@ namespace YesSql.Tests.Search
             string name, Expression<Func<TSource, object>> predicate,
             Func<IQueryable<TSource>, Expression<Func<TSource, bool>>, IQueryable<TSource>> filter = null
         )
-            => context.AddFilter(name, ((MemberExpression)predicate.Body).Member.Name, filter);
+        {
+            if (predicate.Body is UnaryExpression unary)
+            {
+                return context.AddFilter(name, ((MemberExpression)unary.Operand).Member.Name);
+            }
+            else
+            {
+                return context.AddFilter(name, ((MemberExpression)predicate.Body).Member.Name);
+            }
+        }
 
         public static QueryableContext<TSource> AddFilter<TSource>(
             this QueryableContext<TSource> context,
@@ -75,10 +84,20 @@ namespace YesSql.Tests.Search
         }
 
         public static QueryableContext<TSource> AddSort<TSource>(
-                   this QueryableContext<TSource> context,
-                   string name, Expression<Func<TSource, object>> predicate
-               )
-            => context.AddSort(name, ((MemberExpression)predicate.Body).Member.Name);
+            this QueryableContext<TSource> context,
+            string name,
+            Expression<Func<TSource, object>> predicate
+        )
+        {
+            if (predicate.Body is UnaryExpression unary)
+            {
+                return context.AddSort(name, ((MemberExpression)unary.Operand).Member.Name);
+            }
+            else
+            {
+                return context.AddSort(name, ((MemberExpression)predicate.Body).Member.Name);
+            }
+        }
 
         public static QueryableContext<TSource> AddSort<TSource>(
             this QueryableContext<TSource> context,

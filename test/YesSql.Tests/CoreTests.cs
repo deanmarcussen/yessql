@@ -13,6 +13,7 @@ using Xunit;
 using Xunit.Abstractions;
 using YesSql.Commands;
 using YesSql.Indexes;
+using YesSql.Search;
 using YesSql.Services;
 using YesSql.Sql;
 using YesSql.Tests.Commands;
@@ -2587,7 +2588,7 @@ namespace YesSql.Tests
         }
 
         [Fact]
-        public async Task ShouldSearchQueryIndexDefaultContains()
+        public async Task ShouldSearchQueryIndexDefaultMatch()
         {
             CreateQueryIndexSearchData();
 
@@ -2598,7 +2599,7 @@ namespace YesSql.Tests
                     {
                         new DefaultFilterStatement(
                             new UnaryFilterExpression(
-                                new ContainsOperator(),
+                                new MatchOperator(),
                                 new SearchValue("Steve")
                             )
                         )
@@ -2612,7 +2613,7 @@ namespace YesSql.Tests
 
                 var visitor = new QueryIndexVisitor<Person, PersonByName>();
 
-                query = visitor.Visit(context);
+                query = visitor.Query(context);
 
                 // Normal yesql query
                 Assert.Equal("Steve", (await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve")).FirstOrDefaultAsync()).Firstname);
@@ -2624,7 +2625,7 @@ namespace YesSql.Tests
 
 
         [Fact]
-        public async Task ShouldSearchQueryIndexPropertyContains()
+        public async Task ShouldSearchQueryIndexFieldMatch()
         {
             CreateQueryIndexSearchData();
 
@@ -2633,10 +2634,10 @@ namespace YesSql.Tests
                 var statementList = new StatementList(
                     new List<SearchStatement>
                     {
-                        new PropertyFilterStatement(
+                        new FieldFilterStatement(
                             "name",
                             new UnaryFilterExpression(
-                                new ContainsOperator(),
+                                new MatchOperator(),
                                 new SearchValue("Steve")
                             )
                         )
@@ -2651,7 +2652,7 @@ namespace YesSql.Tests
 
                 var visitor = new QueryIndexVisitor<Person, PersonByName>();
 
-                query = visitor.Visit(context);
+                query = visitor.Query(context);
 
                 // Normal yesql query
                 Assert.Equal("Steve", (await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve")).FirstOrDefaultAsync()).Firstname);
@@ -2663,7 +2664,7 @@ namespace YesSql.Tests
 
 
         [Fact]
-        public async Task ShouldSearchQueryIndexPropertyCustomWhereContains()
+        public async Task ShouldSearchQueryIndexPropertyCustomWhereMatch()
         {
             CreateQueryIndexSearchData();
 
@@ -2672,10 +2673,10 @@ namespace YesSql.Tests
                 var statementList = new StatementList(
                     new List<SearchStatement>
                     {
-                        new PropertyFilterStatement(
+                        new FieldFilterStatement(
                             "name",
                             new UnaryFilterExpression(
-                                new ContainsOperator(),
+                                new MatchOperator(),
                                 new SearchValue("Steve")
                             )
                         )
@@ -2698,7 +2699,7 @@ namespace YesSql.Tests
 
                 var visitor = new QueryIndexVisitor<Person, PersonByName>();
 
-                query = visitor.Visit(context);
+                query = visitor.Query(context);
 
                 // Normal yesql query
                 Assert.Equal("Steve", (await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve")).FirstOrDefaultAsync()).Firstname);
@@ -2709,7 +2710,7 @@ namespace YesSql.Tests
         }
 
         [Fact]
-        public async Task ShouldSearchQueryIndexOrContains()
+        public async Task ShouldSearchQueryIndexOrMatch()
         {
             CreateQueryIndexSearchData();
 
@@ -2721,11 +2722,11 @@ namespace YesSql.Tests
                         new DefaultFilterStatement(
                             new OrFilterExpression(
                                 new UnaryFilterExpression(
-                                    new ContainsOperator(),
+                                    new MatchOperator(),
                                     new SearchValue("Steve")
                                 ),
                                 new UnaryFilterExpression(
-                                    new ContainsOperator(),
+                                    new MatchOperator(),
                                     new SearchValue("Bill")
                                 ),
                                 "OR"
@@ -2739,7 +2740,7 @@ namespace YesSql.Tests
 
                 var visitor = new QueryIndexVisitor<Person, PersonByName>();
 
-                context.Query = visitor.Visit(context);
+                context.Query = visitor.Query(context);
 
                 // Normal yesql query
                 Assert.Equal(2, (await session.Query().For<Person>().With<PersonByName>(x => x.SomeName.Contains("Steve") || x.SomeName.Contains("Bill")).CountAsync()));
@@ -2771,7 +2772,7 @@ namespace YesSql.Tests
 
                 var visitor = new QueryIndexVisitor<Person, PersonByName>();
 
-                context.Query = visitor.Visit(context);
+                context.Query = visitor.Query(context);
 
                 Assert.Equal("Steve", (await session.Query<Person>().With<PersonByName>().OrderByDescending(x => x.SomeName).FirstOrDefaultAsync()).Firstname);
                 Assert.Equal("Bill", (await session.Query<Person>().With<PersonByName>().OrderBy(x => x.SomeName).FirstOrDefaultAsync()).Firstname);
@@ -2802,7 +2803,7 @@ namespace YesSql.Tests
 
                 var visitor = new QueryIndexVisitor<Person, PersonByName>();
 
-                context.Query = visitor.Visit(context);
+                context.Query = visitor.Query(context);
 
                 Assert.Equal("Steve", (await session.Query<Person>().With<PersonByName>().OrderByDescending(x => x.SomeName).FirstOrDefaultAsync()).Firstname);
                 Assert.Equal("Bill", (await session.Query<Person>().With<PersonByName>().OrderBy(x => x.SomeName).FirstOrDefaultAsync()).Firstname);
@@ -2842,7 +2843,7 @@ namespace YesSql.Tests
 
             using (var session = _store.CreateSession())
             {
-                var statementList = new Search.StatementList(
+                var statementList = new StatementList(
                     new List<SearchStatement>
                     {
                         new SortStatement(
@@ -2856,7 +2857,7 @@ namespace YesSql.Tests
 
                 var visitor = new QueryIndexVisitor<Person, PersonByName>();
 
-                context.Query = visitor.Visit(context);
+                context.Query = visitor.Query(context);
 
                 Assert.Equal(3, await session.Query<Person>().With<PersonByName>().CountAsync());
                 Assert.Equal("Paul", (await session.Query<Person>().With<PersonByName>().FirstOrDefaultAsync()).Firstname);
@@ -2899,7 +2900,7 @@ namespace YesSql.Tests
                 {
                     new DefaultFilterStatement(
                         new UnaryFilterExpression(
-                            new ContainsOperator(),
+                            new MatchOperator(),
                             new SearchValue("Steve")
                         )
                     )
@@ -2928,7 +2929,7 @@ namespace YesSql.Tests
                 {
                     new DefaultFilterStatement(
                         new UnaryFilterExpression(
-                            new ContainsOperator(),
+                            new MatchOperator(),
                             new SearchValue("Steve")
                         )
                     )
@@ -2957,7 +2958,7 @@ namespace YesSql.Tests
                 {
                     new DefaultFilterStatement(
                         new UnaryFilterExpression(
-                            new ContainsOperator(),
+                            new MatchOperator(),
                             new SearchValue("Steve")
                         )
                     )

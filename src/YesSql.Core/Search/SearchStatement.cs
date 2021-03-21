@@ -7,7 +7,7 @@ using System.Reflection;
 using YesSql.Indexes;
 using YesSql.Services;
 
-namespace YesSql.Tests.Search
+namespace YesSql.Search
 {
     // The idea is Statement applies something. Expression returns something.
 
@@ -33,9 +33,9 @@ namespace YesSql.Tests.Search
             => Expression.ToString();
     }
 
-    public class PropertyFilterStatement : SearchStatement
+    public class FieldFilterStatement : SearchStatement
     {
-        public PropertyFilterStatement(string name, FilterExpression expression)
+        public FieldFilterStatement(string name, FilterExpression expression)
         {
             Name = name;
             Expression = expression;
@@ -45,7 +45,7 @@ namespace YesSql.Tests.Search
         public FilterExpression Expression { get; }
 
         public override TResult Accept<TArgument, TResult>(IStatementVisitor<TArgument, TResult> visitor, TArgument argument)
-            => visitor.VisitPropertyFilterStatement(this, argument);
+            => visitor.VisitFieldFilterStatement(this, argument);
 
         public override string ToString()
             => $"{Name}: {Expression.ToString()}";
@@ -76,5 +76,12 @@ namespace YesSql.Tests.Search
 
         public override TResult Accept<TArgument, TResult>(IStatementVisitor<TArgument, TResult> visitor, TArgument argument)
             => visitor.VisitDefaultSortStatement(this, argument);
+
+        // TODO this gets put in twice sometimes, when it's also typed in.
+        // that doesn't matter much it never runs twice, or if something else has run.
+        // but we don't serialize it by default.
+
+        public override string ToString()
+            => String.Empty;          
     }
 }
