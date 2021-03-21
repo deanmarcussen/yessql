@@ -126,7 +126,7 @@ namespace YesSql.Search
             DefaultSortStatement defaultSortStatement
         )
         {
-            if (!context.Sorts.TryGetValue(defaultSortStatement.PropertyName.Value, out var sortMap))
+            if (!context.Sorts.TryGetValue(defaultSortStatement.FieldName.Value, out var sortMap))
             {
                 throw new InvalidOperationException("Add the sort first.");
             }

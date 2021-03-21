@@ -1,5 +1,6 @@
 using Parlot;
 using Parlot.Fluent;
+using System.Collections.Generic;
 using static Parlot.Fluent.Parsers;
 
 namespace YesSql.Search
@@ -11,6 +12,8 @@ namespace YesSql.Search
 
     public class SearchParser : Parser<StatementList>, ISearchParser
     {
+        private static Parser<List<T>> CustomSeparated<U, T>(Parser<U> separator, Parser<T> parser) => new CustomSeparated<U, T>(separator, parser);
+
         private readonly Parser<StatementList> _parser;
 
         public StatementList ParseSearch(string text)
@@ -121,11 +124,12 @@ namespace YesSql.Search
             var NotTextOperator = Literals.Text("NOT", caseInsensitive: true)
                 .Then<SearchOperator>(static x => new NotMatchOperator("NOT "));
 
+            // TODO remove. or include + as an operator.
             var NotDashOperator = Literals.Char('-')
-                .Then<SearchOperator>(static x => new NotMatchOperator("- "));
+                .Then<SearchOperator>(static x => new NotMatchOperator("-"));
 
             var NotExclamationOperator = Literals.Char('!')
-                .Then<SearchOperator>(static x => new NotMatchOperator("! "));
+                .Then<SearchOperator>(static x => new NotMatchOperator("!"));
 
             var NotOperator = OneOf(NotTextOperator, NotDashOperator, NotExclamationOperator);
 
@@ -134,7 +138,7 @@ namespace YesSql.Search
             var OperatorAndValue = Operator.And(Value)
                 .Then<FilterExpression>(static x => new UnaryFilterExpression(x.Item1, x.Item2));
 
-            var Seperator = Literals.Char('+').Or(Literals.Char(' '));
+            var Seperator = Literals.WhiteSpace().SkipAnd(Terms.Identifier()).AndSkip(Literals.Char(':'));
 
             var SeperatorOrOperator = Seperator
                     .Then<SearchOperator>(static x => null)
@@ -142,7 +146,7 @@ namespace YesSql.Search
 
             Value.Parser = Terms.String()
                 .Or(
-                    AnyCharBefore(SeperatorOrOperator) // quick hack.
+                    AnyCharBefore(SeperatorOrOperator)
                 ).Then(static x => new SearchValue(x.ToString()));
 
             var UnaryFilter = OperatorAndValue.Or(
@@ -150,11 +154,26 @@ namespace YesSql.Search
                     .Then<FilterExpression>(static value => new UnaryFilterExpression(new MatchOperator(), value))
                 );
 
-            var LogicalOperators = Terms.Text("AND")
+            // The idea is we want if to be steve AND balmer.
+            var AndOperator = Literals.WhiteSpace()
+                    .Then(x => x.ToString())
                 .Or(
-                    Terms.Text("OR").Or(Terms.Text("|"))
-                )
-                .AndSkip(Literals.WhiteSpace());
+                    Terms.Text("AND")
+                );
+
+            var OrOperator = Terms.Text("OR").Or(Terms.Text("|")).AndSkip(Literals.WhiteSpace());
+
+            // var LogicalOperators = AndOperator
+            //     .Or(
+            //         OrOperator
+            //     );
+
+            var LogicalOperators = Terms.Text("AND")
+                   .Or(
+                      Terms.Text("OR").Or(Terms.Text("|"))
+                  )
+                 .AndSkip(Literals.WhiteSpace());
+
 
             var BinaryOrUnaryFilter = UnaryFilter.And(ZeroOrMany(LogicalOperators.And(UnaryFilter)))
                 .Then<FilterExpression>(static x =>
@@ -175,7 +194,7 @@ namespace YesSql.Search
                     return result;
                 });
 
-            var PropertyFilterStatement = Terms.Identifier().AndSkip(Literals.Char(':').AndSkip(Literals.WhiteSpace()))
+            var FieldFilterStatement = Terms.Identifier().AndSkip(Literals.Char(':').AndSkip(Literals.WhiteSpace()))
                 .And(
                     BinaryOrUnaryFilter
                 )
@@ -185,16 +204,10 @@ namespace YesSql.Search
                 .Then<SearchStatement>(static x => new DefaultFilterStatement(x));
 
             // Always consume property statements before the default statement.
-            var Statements = OneOf(SortStatement, PropertyFilterStatement, DefaultFilterStatement);
+            var Statements = OneOf(SortStatement, FieldFilterStatement, DefaultFilterStatement);
 
-            _parser = Separated(
-                    Seperator
-                    // .AndSkip(
-                    //     // Not(LogicalOperators)
-                    // //     .Or(Literals.Text("+")
-                    // // )
-                    // )
-                    ,
+            _parser = CustomSeparated(
+                Seperator,
                 Statements)
                     .Then(static x => new StatementList(x));
         }

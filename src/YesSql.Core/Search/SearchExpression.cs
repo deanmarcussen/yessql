@@ -147,7 +147,6 @@ namespace YesSql.Search
             => "-desc";
     }
 
-
     public class StatementList
     {        
         public StatementList()

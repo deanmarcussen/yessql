@@ -111,7 +111,7 @@ namespace YesSql.Search
 
         public QueryableContext<TSource> VisitSortStatement(SortStatement statement, QueryableContext<TSource> context)
         {
-            if (!context.Sorts.TryGetValue(statement.PropertyName.Value, out var sortMap))
+            if (!context.Sorts.TryGetValue(statement.FieldName.Value, out var sortMap))
             {
                 return context;
             }

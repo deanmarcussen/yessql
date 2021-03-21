@@ -48,25 +48,25 @@ namespace YesSql.Search
             => visitor.VisitFieldFilterStatement(this, argument);
 
         public override string ToString()
-            => $"{Name}: {Expression.ToString()}";
+            => $"{Name}:{Expression.ToString()}";
     }
 
     public class SortStatement : SearchStatement
     {
-        public SortStatement(SearchValue propertyName, SortExpression sort)
+        public SortStatement(SearchValue fieldName, SortExpression sort)
         {
-            PropertyName = propertyName;
+            FieldName = fieldName;
             Sort = sort;
         }
 
-        public SearchValue PropertyName { get; }
+        public SearchValue FieldName { get; }
         public SortExpression Sort { get; }
 
         public override TResult Accept<TArgument, TResult>(IStatementVisitor<TArgument, TResult> visitor, TArgument argument)
             => visitor.VisitSortStatement(this, argument);
 
         public override string ToString()
-            => $"sort:{PropertyName.ToString()}{Sort.ToString()}";
+            => $"sort:{FieldName.ToString()}{Sort.ToString()}";
     }
 
     public class DefaultSortStatement : SortStatement

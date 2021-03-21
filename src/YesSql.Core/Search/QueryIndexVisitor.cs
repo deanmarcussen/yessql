@@ -118,7 +118,7 @@ namespace YesSql.Search
 
         public QueryIndexContext<TDocument, TIndex> VisitSortStatement(SortStatement statement, QueryIndexContext<TDocument, TIndex> context)
         {
-            if (!context.Sorts.TryGetValue(statement.PropertyName.Value, out var sortMap))
+            if (!context.Sorts.TryGetValue(statement.FieldName.Value, out var sortMap))
             {
                 return context;
             }
