@@ -17,8 +17,7 @@ namespace YesSql.Search
         IStatementVisitor<QueryableContext<TSource>, QueryableContext<TSource>>,
         IFilterExpressionVisitor<QueryableExpressionArgument<TSource>, Expression>,
         ISortExpressionVisitor<QueryableExpressionArgument<TSource>, QueryableContext<TSource>>,
-        IOperatorVisitor<QueryableOperationArgument<TSource>, Expression>,
-        IValueVisitor<ConstantExpression>
+        IOperatorVisitor<QueryableOperationArgument<TSource>, Expression>
     {
         private static readonly MethodInfo _containsMethod = typeof(string).GetMethod("Contains", new[] { typeof(string) })!;
         private static readonly MethodInfo _notContainsMethod = typeof(DefaultQueryExtensions).GetMethod("NotContains", new[] { typeof(string), typeof(string) })!;
@@ -31,6 +30,7 @@ namespace YesSql.Search
         private static readonly Func<IOrderedQueryable<TSource>, Expression<Func<TSource, object>>, IQueryable<TSource>> _defaultThenByDescending = (query, e) => query.ThenByDescending(e);
 
         private readonly ParameterExpression _parameter;
+        private readonly ExpressionValueVisitor _valueVisitor = new ExpressionValueVisitor();
 
         public QueryableVisitor()
         {
@@ -166,15 +166,21 @@ namespace YesSql.Search
         {
             if (argument.QueryableArgument.MemberExpression.Type == typeof(string))
             {
+                var valueArgument = new ValueArgument { Type = argument.QueryableArgument.MemberExpression.Type };
                 return Expression.Call(
                     argument.QueryableArgument.MemberExpression,
                     _containsMethod,
-                    argument.FilterExpression.Value.Accept(this)
+                    argument.FilterExpression.Value.Accept(_valueVisitor, valueArgument)
                 );
+            }
+            else if (argument.QueryableArgument.MemberExpression.Type == typeof(bool))
+            {
+                return Expression.Equal(argument.QueryableArgument.MemberExpression, Expression.Constant(true));
             }
             else
             {
-                return Expression.Equal(argument.QueryableArgument.MemberExpression, Expression.Constant(true));
+                var valueArgument = new ValueArgument { Type = argument.QueryableArgument.MemberExpression.Type };
+                return Expression.Equal(argument.QueryableArgument.MemberExpression, argument.FilterExpression.Value.Accept(_valueVisitor, valueArgument));
             }
         }
 
@@ -182,21 +188,24 @@ namespace YesSql.Search
         {
             if (argument.QueryableArgument.MemberExpression.Type == typeof(string))
             {
+                var valueArgument = new ValueArgument { Type = argument.QueryableArgument.MemberExpression.Type };
                 return Expression.Call(
                     argument.QueryableArgument.MemberExpression,
                     _notContainsMethod,
-                    argument.FilterExpression.Value.Accept(this)
+                    argument.FilterExpression.Value.Accept(_valueVisitor, valueArgument)
                 );
             }
-            else
+            else if (argument.QueryableArgument.MemberExpression.Type == typeof(bool))
             {
                 return Expression.Equal(argument.QueryableArgument.MemberExpression, Expression.Constant(false));
             }
-        }        
+            else
+            {
+                var valueArgument = new ValueArgument { Type = argument.QueryableArgument.MemberExpression.Type };
 
-        ConstantExpression IValueVisitor<ConstantExpression>.VisitValue(SearchValue value)
-            => Expression.Constant(value.Value.ToString());
-
+                return Expression.NotEqual(argument.QueryableArgument.MemberExpression, argument.FilterExpression.Value.Accept(_valueVisitor, valueArgument));
+            }
+        }
 
         public QueryableContext<TSource> VisitSortAscending(SortAscending expression, QueryableExpressionArgument<TSource> argument)
         {
@@ -244,5 +253,5 @@ namespace YesSql.Search
     {
         public UnaryFilterExpression FilterExpression { get; set; }
         public QueryableExpressionArgument<TSource> QueryableArgument { get; set; }
-    }    
+    }
 }

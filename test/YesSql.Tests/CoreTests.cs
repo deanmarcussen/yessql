@@ -2623,7 +2623,6 @@ namespace YesSql.Tests
             }
         }
 
-
         [Fact]
         public async Task ShouldSearchQueryIndexFieldMatch()
         {
@@ -2662,6 +2661,61 @@ namespace YesSql.Tests
             }
         }
 
+        [Fact]
+        public async Task ShouldSearchQueryIndexFieldMatchInt()
+        {
+            _store.RegisterIndexes<PersonAgeIndexProvider>();
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates",
+                    Age = 40
+                };
+
+                var steve = new Person
+                {
+                    Firstname = "Steve",
+                    Lastname = "Balmer",
+                    Age = 20
+                };
+
+                session.Save(bill);
+                session.Save(steve);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var statementList = new StatementList(
+                    new List<SearchStatement>
+                    {
+                        new FieldFilterStatement(
+                            "age",
+                            new UnaryFilterExpression(
+                                new MatchOperator(),
+                                new SearchValue("20")
+                            )
+                        )
+                    });
+
+
+                var query = session.Query().For<Person>().With<PersonByAge>();
+
+                var context = new QueryIndexContext<Person, PersonByAge>(statementList, query)
+                    .AddFilter("age", x => x.Age);
+
+                var visitor = new QueryIndexVisitor<Person, PersonByAge>();
+
+                query = visitor.Query(context);
+
+                // Normal yesql query
+                Assert.Equal(20, (await session.Query().For<Person>().With<PersonByAge>(x => x.Age == 20).FirstOrDefaultAsync()).Age);
+
+                // Built query.
+                Assert.Equal(20, (await context.Query.FirstOrDefaultAsync()).Age);
+            }
+        }
 
         [Fact]
         public async Task ShouldSearchQueryIndexPropertyCustomWhereMatch()

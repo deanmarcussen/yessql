@@ -18,8 +18,8 @@ namespace YesSql.Search
 
         public string Value { get; }
 
-        public TResult Accept<TResult>(IValueVisitor<TResult> visitor)
-            => visitor.VisitValue(this);
+        public TResult Accept<TResult, TArgument>(IValueVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitValue(this, argument);
 
         public override string ToString()
             => Value;
@@ -81,20 +81,22 @@ namespace YesSql.Search
 
     public class AndFilterExpression : FilterExpression
     {
-        public AndFilterExpression(FilterExpression left, FilterExpression right)
+        public AndFilterExpression(FilterExpression left, FilterExpression right, string value)
         {
             Left = left;
             Right = right;
+            HasValue = !String.IsNullOrWhiteSpace(value);
         }
 
         public FilterExpression Left { get; }
-        public FilterExpression Right { get; }
+        public FilterExpression Right { get; }        
+        public bool HasValue { get; }
 
         public override TResult Accept<TArgument, TResult>(IFilterExpressionVisitor<TArgument, TResult> visitor, TArgument argument)
             => visitor.VisitAndFilterExpression(this, argument);
 
         public override string ToString()
-            => $"{Left.ToString()} AND {Right.ToString()}";
+            => HasValue ? $"{Left.ToString()} AND {Right.ToString()}" : $"{Left.ToString()} {Right.ToString()}";
     }
 
     public class OrFilterExpression : FilterExpression

@@ -10,8 +10,8 @@ using YesSql.Services;
 namespace YesSql.Search
 {
 
-    public interface IValueVisitor<TResult>
+    public interface IValueVisitor<TArgument, TResult>
     {
-        TResult VisitValue(SearchValue value);
+        TResult VisitValue(SearchValue value, TArgument argument);
     }  
 }

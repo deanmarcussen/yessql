@@ -23,7 +23,6 @@ namespace YesSql.Search
         IFilterExpressionVisitor<QueryIndexExpressionArgument<TDocument, TIndex>, Expression>,
         ISortExpressionVisitor<QueryIndexExpressionArgument<TDocument, TIndex>, QueryIndexContext<TDocument, TIndex>>,
         IOperatorVisitor<QueryOperationArgument<TDocument, TIndex>, Expression>,
-        IValueVisitor<ConstantExpression>,
         IQueryIndexVisitor<TDocument, TIndex>
         where TDocument : class where TIndex : class, IIndex
     {
@@ -38,6 +37,7 @@ namespace YesSql.Search
 
 
         private readonly ParameterExpression _parameter;
+        private readonly ExpressionValueVisitor _valueVisitor = new ExpressionValueVisitor();
 
         public QueryIndexVisitor()
         {
@@ -52,7 +52,6 @@ namespace YesSql.Search
             }
 
             return context.Query;
-
         }
 
         public QueryIndexContext<TDocument, TIndex> VisitDefaultFilterStatement(DefaultFilterStatement statement, QueryIndexContext<TDocument, TIndex> context)
@@ -170,41 +169,51 @@ namespace YesSql.Search
                 expression.Right.Accept(this, argument)
             );
 
+            // TODO refactor these together as well.
+
         public Expression VisitMatchOperator(MatchOperator op, QueryOperationArgument<TDocument, TIndex> argument)
         {
             if (argument.QueryIndexArgument.MemberExpression.Type == typeof(string))
             {
+                var valueArgument = new ValueArgument { Type = argument.QueryIndexArgument.MemberExpression.Type };
                 return Expression.Call(
                     argument.QueryIndexArgument.MemberExpression,
                     _containsMethod,
-                    argument.FilterExpression.Value.Accept(this)
+                    argument.FilterExpression.Value.Accept(_valueVisitor, valueArgument)
                 );
+            }
+            else if (argument.QueryIndexArgument.MemberExpression.Type == typeof(bool))
+            {
+                return Expression.Equal(argument.QueryIndexArgument.MemberExpression, Expression.Constant(true));
             }
             else
             {
-                return Expression.Equal(argument.QueryIndexArgument.MemberExpression, Expression.Constant(true));
+                var valueArgument = new ValueArgument { Type = argument.QueryIndexArgument.MemberExpression.Type };
+                return Expression.Equal(argument.QueryIndexArgument.MemberExpression, argument.FilterExpression.Value.Accept(_valueVisitor, valueArgument));
             }
         }
 
         public Expression VisitNotMatchOperator(NotMatchOperator op, QueryOperationArgument<TDocument, TIndex> argument)
         {
-            // TODO dates etc. But one would expect them to be > < operators.
             if (argument.QueryIndexArgument.MemberExpression.Type == typeof(string))
             {
+                var valueArgument = new ValueArgument { Type = argument.QueryIndexArgument.MemberExpression.Type };
                 return Expression.Call(
                     argument.QueryIndexArgument.MemberExpression,
                     _notContainsMethod,
-                    argument.FilterExpression.Value.Accept(this)
+                    argument.FilterExpression.Value.Accept(_valueVisitor, valueArgument)
                 );
             }
-            else
+            else if (argument.QueryIndexArgument.MemberExpression.Type == typeof(bool))
             {
                 return Expression.Equal(argument.QueryIndexArgument.MemberExpression, Expression.Constant(false));
             }
+            else
+            {
+                var valueArgument = new ValueArgument { Type = argument.QueryIndexArgument.MemberExpression.Type };
+                return Expression.NotEqual(argument.QueryIndexArgument.MemberExpression, argument.FilterExpression.Value.Accept(_valueVisitor, valueArgument));
+            }
         }
-
-        ConstantExpression IValueVisitor<ConstantExpression>.VisitValue(SearchValue value)
-            => Expression.Constant(value.Value);
 
         public QueryIndexContext<TDocument, TIndex> VisitSortAscending(SortAscending expression, QueryIndexExpressionArgument<TDocument, TIndex> argument)
         {

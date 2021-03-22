@@ -37,6 +37,23 @@ namespace YesSql.Tests.Search
         [Fact]
         public void ShouldNotIncludeWhiteSpace()
         {
+
+            // need to describe this better.
+            // this OneOrMany(value)
+            // or it's
+            // Seperated(WhiteSpace, OperatorOrValue);
+
+            // actually this does make sense as
+            // Unary = OperatorAndValue or Value.
+            // where operators are
+            // whitespace value
+            // NOT value
+            // - value
+
+            // so gotta stop value consuming the whitespace.
+
+
+
             // Should not include the whitespace.
             Assert.Equal("name:steve", _parser.Parse("name:steve ").ToString());
         }        
@@ -158,6 +175,17 @@ namespace YesSql.Tests.Search
             Assert.Equal(2, parser.Parse("text:foo author:bar").Count);
 
             Assert.Equal(2, parser.Parse("text:foo is awesome author:bar").Count);
+        }
+
+        [Fact]
+        public void WhiteSpaceTests()
+        {
+            // So what this tests, is that a whitespace parser
+            // cannot be used to see if there is whitespace.
+            // because it always returns true.
+            Assert.Equal(" ", Literals.WhiteSpace().Parse(" "));
+            Assert.True(Literals.WhiteSpace().TryParse(" ", out _));
+            Assert.True(Literals.WhiteSpace().TryParse("", out _));
         }
     }
 }

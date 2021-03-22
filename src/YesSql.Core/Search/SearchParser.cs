@@ -133,47 +133,60 @@ namespace YesSql.Search
 
             var NotOperator = OneOf(NotTextOperator, NotDashOperator, NotExclamationOperator);
 
+            var MatchOperator = Literals.WhiteSpace()
+                .Then<SearchOperator>(static x => new MatchOperator());
+
             Operator.Parser = OneOf(NotOperator).AndSkip(Literals.WhiteSpace());
 
             var OperatorAndValue = Operator.And(Value)
                 .Then<FilterExpression>(static x => new UnaryFilterExpression(x.Item1, x.Item2));
 
-            var Seperator = Literals.WhiteSpace().SkipAnd(Terms.Identifier()).AndSkip(Literals.Char(':'));
+            var Seperator = Terms.Identifier().AndSkip(Literals.Char(':'));
 
             var SeperatorOrOperator = Seperator
                     .Then<SearchOperator>(static x => null)
-                .Or(Operator);
+                .Or(Operator)
+                .Or(
+                    Not(Literals.NonWhiteSpace()) // TODO. issue. if Literals.WhiteSpace returned false when there was none. this would be much better.
+                        .Then<SearchOperator>(static x => null)
+                );
 
-            Value.Parser = Terms.String()
+            Value.Parser = Terms.String() 
                 .Or(
                     AnyCharBefore(SeperatorOrOperator)
-                ).Then(static x => new SearchValue(x.ToString()));
+                )
+                    .Then(static x => new SearchValue(x.ToString()));
+
+            // TODO open an issue and fix NOT. doesn't reset on partial success.
+            // Value.Parser = Terms.String().AndSkip(Not(Seperator)) // I think this doesn't reset. Yeah looks like it doesn't reset on partial success.
+            //     .Or(
+            //         Terms.NonWhiteSpace().AndSkip(Not(Seperator)) // This would be great.
+            //     )
+            //     // .AndSkip(Not(Seperator)) // but this makes it not work.
+            //         .Then(static x => new SearchValue(x.ToString()));                    
 
             var UnaryFilter = OperatorAndValue.Or(
                 Value
                     .Then<FilterExpression>(static value => new UnaryFilterExpression(new MatchOperator(), value))
                 );
 
-            // The idea is we want if to be steve AND balmer.
-            var AndOperator = Literals.WhiteSpace()
-                    .Then(x => x.ToString())
+            // stev balmer -> steve AND balmer.
+            var AndOperator = Terms.Text("AND")
                 .Or(
-                    Terms.Text("AND")
+                    Literals.Text(" ") // Again if whitespace returned a true / false.
+                )
+                .AndSkip(Literals.WhiteSpace());
+
+            var OrOperator = Terms.Text("OR")
+                .Or(
+                    Terms.Text("|")
+                )
+                .AndSkip(Literals.WhiteSpace());
+
+            var LogicalOperators = OrOperator
+                .Or(
+                    AndOperator
                 );
-
-            var OrOperator = Terms.Text("OR").Or(Terms.Text("|")).AndSkip(Literals.WhiteSpace());
-
-            // var LogicalOperators = AndOperator
-            //     .Or(
-            //         OrOperator
-            //     );
-
-            var LogicalOperators = Terms.Text("AND")
-                   .Or(
-                      Terms.Text("OR").Or(Terms.Text("|"))
-                  )
-                 .AndSkip(Literals.WhiteSpace());
-
 
             var BinaryOrUnaryFilter = UnaryFilter.And(ZeroOrMany(LogicalOperators.And(UnaryFilter)))
                 .Then<FilterExpression>(static x =>
@@ -184,7 +197,8 @@ namespace YesSql.Search
                     {
                         result = filter.Item1 switch
                         {
-                            "AND" => new AndFilterExpression(result, filter.Item2),
+                            "AND" => new AndFilterExpression(result, filter.Item2, filter.Item1),
+                            " " => new AndFilterExpression(result, filter.Item2, filter.Item1),
                             "OR" => new OrFilterExpression(result, filter.Item2, filter.Item1),
                             "|" => new OrFilterExpression(result, filter.Item2, filter.Item1),
                             _ => null
@@ -203,7 +217,7 @@ namespace YesSql.Search
             var DefaultFilterStatement = BinaryOrUnaryFilter
                 .Then<SearchStatement>(static x => new DefaultFilterStatement(x));
 
-            // Always consume property statements before the default statement.
+            // Always consume field statements before the default statement.
             var Statements = OneOf(SortStatement, FieldFilterStatement, DefaultFilterStatement);
 
             _parser = CustomSeparated(
