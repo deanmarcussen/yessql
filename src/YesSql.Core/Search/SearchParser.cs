@@ -109,6 +109,7 @@ namespace YesSql.Search
 
             var SortOperator = DescendingOperator.Or(AscendingOperator);
 
+            // TODO sort shouldn't consume whitespace. should be single value only
             var SortValue = AnyCharBefore(Literals.Char('-'))
                 .Then(static x => new SearchValue(x.ToString()));
 

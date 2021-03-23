@@ -161,7 +161,7 @@ namespace YesSql.Search
             Statements = statements;
         }
 
-        public List<SearchStatement> Statements { get; }
+        public List<SearchStatement> Statements { get; set; }
 
         /// <summary>
         /// Indicates to the search processing context that a order statement has already been applied

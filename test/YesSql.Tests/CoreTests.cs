@@ -2739,11 +2739,15 @@ namespace YesSql.Tests
                 var query = session.Query().For<Person>().With<PersonByName>();
 
                 var context = new QueryIndexContext<Person, PersonByName>(statementList, query)
-                   .AddFilter("name",
+                   .AddFilter("full_text",
                        x => x.SomeName,
                        (query, exp) =>
+
+                       var lucene = lucene.Query(exp);
+
+
                            query.Any(
-                               x => query.With<PersonByName>(exp)
+                               x => query.With<PersonByName>(x => x.Id.IsNotIn(lucene))
                            )
                            .Any(
                                x => query.With<PersonByName>(exp)
@@ -3030,6 +3034,69 @@ namespace YesSql.Tests
 
             Assert.Equal("Steve", persons.FirstOrDefault().Firstname);
         }
+
+        // [Fact]
+        // public void ShouldSearchSerializeWithDefaultFilter()
+        // {
+        //     var statementList = new StatementList(
+        //         new List<SearchStatement>
+        //         {
+        //             new DefaultFilterStatement(
+        //                 new UnaryFilterExpression(
+        //                     new MatchOperator(),
+        //                     new SearchValue("Steve")
+        //                 )
+        //             )
+        //         });
+
+        //     var context = new QueryIndexContext<Person, PersonByName>(statementList, null)
+        //         .AddFilter("name", x => x.SomeName)
+        //         .SetDefaultFilter("name");
+
+
+        //     var visitor = new QueryIndexSerializer<Person, PersonByName>();
+
+        //     var serialized = visitor.Serialize(context);
+
+        //     Assert.Equal("name:Steve", serialized);
+        // }
+
+        [Fact]
+        public void ShouldSearchSerializeWithAdult()
+        {
+            var queryStringStatements = new List<SearchStatement>
+                {
+                    new FieldFilterStatement(
+                        "status",
+                        new UnaryFilterExpression(
+                            new MatchOperator(),
+                            new SearchValue("adult")
+                        )
+                    )
+                };
+
+           var formStatements = new List<SearchStatement>
+                {
+                    new FieldFilterStatement(
+                        "status",
+                        new UnaryFilterExpression(
+                            new NotMatchOperator("NOT "),
+                            new SearchValue("adult")
+                        )
+                    )
+                };                
+
+            var context = new QueryIndexContext<Person, PersonByAge>(new StatementList(queryStringStatements), null)
+                .AddFilter("status", x => x.Adult)
+                .SetDefaultFilter("status");
+
+
+            var visitor = new QueryIndexSerializer<Person, PersonByAge>();
+
+            var serialized = visitor.Serialize(context, new StatementList(queryStringStatements), new StatementList(formStatements));
+
+            Assert.Equal("status:NOT adult", serialized);
+        }        
 
         [Fact]
         public async Task ShouldQueryByReducedIndex()

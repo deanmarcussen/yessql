@@ -19,6 +19,7 @@ namespace YesSql.Search
         public StatementList StatementList { get; set; }
         public IQuery<TDocument, TIndex> Query { get; set; }
         public QueryIndexFilterMap<TDocument, TIndex> DefaultFilter { get; set; }
+        public string DefaultFilterName { get; set; }
         public Dictionary<string, QueryIndexFilterMap<TDocument, TIndex>> Filters { get; set; } = new();
         public Dictionary<string, QueryIndexSortMap<TDocument, TIndex>> Sorts { get; set; } = new();
     }
@@ -84,6 +85,7 @@ namespace YesSql.Search
             }
 
             context.DefaultFilter = filterMap;
+            context.DefaultFilterName = name;
 
             return context;
         }
