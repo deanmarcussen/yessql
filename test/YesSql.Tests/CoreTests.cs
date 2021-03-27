@@ -2716,7 +2716,7 @@ namespace YesSql.Tests
                 Assert.Equal(20, (await context.Query.FirstOrDefaultAsync()).Age);
             }
         }
-
+/*
         [Fact]
         public async Task ShouldSearchQueryIndexPropertyCustomWhereMatch()
         {
@@ -2766,7 +2766,7 @@ namespace YesSql.Tests
                 Assert.Equal("Steve", (await context.Query.FirstOrDefaultAsync()).Firstname);
             }
         }
-
+*/
         [Fact]
         public async Task ShouldSearchQueryIndexOrMatch()
         {

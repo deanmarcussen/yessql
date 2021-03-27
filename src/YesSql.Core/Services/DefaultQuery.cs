@@ -1220,6 +1220,12 @@ namespace YesSql.Services
                         _query._queryState._sqlBuilder.Selector(_query._queryState._sqlBuilder.FormatColumn(_query._queryState._documentTable, "*"));
                         _query._queryState._sqlBuilder.Distinct();
                         var sql = _query._queryState._sqlBuilder.ToSqlString();
+                        foreach(var p in _query._queryState._sqlBuilder.Parameters)
+                        {
+                            Console.WriteLine(p.Key + " " + p.Value);
+
+                        }
+                        Console.WriteLine(sql);
                         var key = new WorkerQueryKey(sql, _query._queryState._sqlBuilder.Parameters);
                         var documents = await _query._session._store.ProduceAsync(key, (args) =>
                         {
