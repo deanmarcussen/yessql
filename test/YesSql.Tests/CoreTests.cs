@@ -23,6 +23,7 @@ using YesSql.Tests.CompiledQueries;
 using YesSql.Tests.Indexes;
 using YesSql.Tests.Models;
 using YesSql.Tests.Search;
+using static YesSql.Core.QueryParser.Fluent.QueryParsers;
 
 namespace YesSql.Tests
 {
@@ -2747,15 +2748,11 @@ namespace YesSql.Tests
 
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new []
-                {
-                    new NamedTermParser<Article>
-                    (
-                        "title", 
-                        new UnaryParser<Article>((query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
+                var parser = QueryParser(
+                    NamedTermParser("title",
+                        OneConditionParser<Article>((query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
                     )
-                });
-       
+                );
 
                 var parsed = parser.Parse(search);
 
@@ -2799,14 +2796,11 @@ namespace YesSql.Tests
             {
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new []
-                {
-                    new DefaultTermParser<Article>
-                    (
-                        "title", 
-                        new UnaryParser<Article>((query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
+                var parser = QueryParser(
+                    DefaultTermParser("title",
+                        OneConditionParser<Article>((query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
                     )
-                });
+                );
 
                 var parsed = parser.Parse(search);
 
@@ -2850,18 +2844,14 @@ namespace YesSql.Tests
                 var search = "title:bill post";
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new []
-                {
-                    // just starting to work on the generics.
-                    new NamedTermParser<Article>
-                    (
-                        "title", 
-                        new BooleanParser<Article>(
+                var parser = QueryParser(
+                    NamedTermParser("title",
+                        ManyConditionParser<Article>(
                             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
                             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
                         )
                     )
-                });
+                );
 
                 var parsed = parser.Parse(search);
                 parsed.Build(searchQuery);
@@ -2907,18 +2897,14 @@ namespace YesSql.Tests
                 var search = "title:bill AND rabbits";
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new []
-                {
-                    // just starting to work on the generics.
-                    new NamedTermParser<Article>
-                    (
-                        "title", 
-                        new BooleanParser<Article>(
+                var parser = QueryParser(
+                    NamedTermParser("title",
+                        ManyConditionParser<Article>(
                             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
+                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val))) 
                         )
                     )
-                });
+                );
 
                 var parsed = parser.Parse(search);
 
@@ -2964,20 +2950,27 @@ namespace YesSql.Tests
                 var search = "title:(beach AND sand) OR (mountain AND lake)";
                 var searchQuery = session.Query<Article>();
 
-                // NOTES: The OR should be the top node. it's not AND is the top node.
+                // var parser = new QueryParser<Article>(new []
+                // {
+                //     // just starting to work on the generics.
+                //     new NamedTermParser<Article>
+                //     (
+                //         "title", 
+                //         new BooleanParser<Article>(
+                //             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
+                //             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
+                //         )
+                //     )
+                // });
 
-                var parser = new QueryParser<Article>(new []
-                {
-                    // just starting to work on the generics.
-                    new NamedTermParser<Article>
-                    (
-                        "title", 
-                        new BooleanParser<Article>(
+                var parser = QueryParser(
+                    NamedTermParser("title",
+                        ManyConditionParser<Article>(
                             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
+                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))  
                         )
                     )
-                });
+                );
 
                 var parsed = parser.Parse(search);
 
@@ -3038,18 +3031,28 @@ namespace YesSql.Tests
                 var search = "title:((beach AND sand) OR (mountain AND lake)) NOT lizards";
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new []
-                {
-                    // just starting to work on the generics.
-                    new NamedTermParser<Article>
-                    (
-                        "title", 
-                        new BooleanParser<Article>(
+                // var parser = new QueryParser<Article>(new []
+                // {
+                //     // just starting to work on the generics.
+                //     new NamedTermParser<Article>
+                //     (
+                //         "title", 
+                //         new BooleanParser<Article>(
+                //             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
+                //             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
+                //         )
+                //     )
+                // });
+
+                var parser = QueryParser(
+                    NamedTermParser("title",
+                        ManyConditionParser<Article>(
                             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
+                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))    
                         )
                     )
-                });
+
+                );
 
                 var parsed = parser.Parse(search);
 

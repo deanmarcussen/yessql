@@ -8,7 +8,7 @@ namespace YesSql.Core.QueryParser
 
     public class BooleanParser<T> : OperatorParser<T> where T : class
     {
-        public BooleanParser(Func<IQuery<T>, string, IQuery<T>> positiveQuery, Func<IQuery<T>, string, IQuery<T>> negativeQuery)
+        public BooleanParser(Func<IQuery<T>, string, IQuery<T>> matchQuery, Func<IQuery<T>, string, IQuery<T>> notMatchQuery)
         {
             var OperatorNode = Deferred<OperatorNode<T>>();
 
@@ -42,7 +42,7 @@ namespace YesSql.Core.QueryParser
                 .Or(
                     Terms.Identifier() // TODO when this is NonWhiteSpace it sucks up paranthese. Will Identifier catch accents, i.e. multilingual.
                 )
-                    .Then<OperatorNode<T>>(x => new UnaryNode<T>(x.ToString(), positiveQuery));
+                    .Then<OperatorNode<T>>(x => new UnaryNode<T>(x.ToString(), matchQuery));
 
             var Primary = SingleNode.Or(GroupNode);
 
@@ -53,7 +53,7 @@ namespace YesSql.Core.QueryParser
                     var unaryNode = x.Item2 as UnaryNode<T>;
 
                     // TODO test what actually happens when just using NOT foo
-                    return new NotUnaryNode<T>(x.Item1, new UnaryNode<T>(unaryNode.Value, negativeQuery));
+                    return new NotUnaryNode<T>(x.Item1, new UnaryNode<T>(unaryNode.Value, notMatchQuery));
                 })
                 .Or(Primary);
 
@@ -81,8 +81,8 @@ namespace YesSql.Core.QueryParser
                    {
                        result = op.Item1 switch
                        {
-                           "NOT" => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, negativeQuery), op.Item1),
-                           "!" => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, negativeQuery), op.Item1),
+                           "NOT" => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, notMatchQuery), op.Item1),
+                           "!" => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, notMatchQuery), op.Item1),
                            "OR" => new OrNode<T>(result, op.Item2, op.Item1),
                            "||" => new OrNode<T>(result, op.Item2, op.Item1),
                            " " => new OrNode<T>(result, op.Item2, op.Item1),
