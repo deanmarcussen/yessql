@@ -9,7 +9,7 @@ namespace YesSql.Core.QueryParser
 {
     public class QueryParser<T> : Parser<TermList<T>> where T : class
     {
-        private static Parser<List<X>> CustomSeparated<U, X>(Parser<U> separator, Parser<X> parser) => new CustomSeparated<U, X>(separator, parser);
+        private static Parser<List<V>> _customSeparated<U, V>(Parser<U> separator, Parser<V> parser) => new CustomSeparated<U, V>(separator, parser);
 
         public QueryParser(params TermParser<T>[] parsers)
         {
@@ -17,14 +17,14 @@ namespace YesSql.Core.QueryParser
 
             var Seperator = OneOf(parsers.Select(x => x.SeperatorParser).ToArray());
 
-            Parser = CustomSeparated(
+            Parser = _customSeparated(
                 Seperator,
                 Terms)
                     .Then(static x => new TermList<T>(x));
         }
 
-        protected Parser<TermList<T>> Parser { get; private set; }
-        
+        protected Parser<TermList<T>> Parser { get; }
+
         public override bool Parse(ParseContext context, ref ParseResult<TermList<T>> result)
         {
             context.EnterParser(this);

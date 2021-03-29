@@ -2721,7 +2721,7 @@ namespace YesSql.Tests
 
 
         [Fact]
-        public async Task ShouldParseQuery()
+        public async Task ShouldParseNamedTermQuery()
         {
             _store.RegisterIndexes<ArticleByPublishedDateProvider>();
 
@@ -2747,9 +2747,9 @@ namespace YesSql.Tests
 
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new TermParser<Article>[]
+                var parser = new QueryParser<Article>(new []
                 {
-                    new TermParser<Article>
+                    new NamedTermParser<Article>
                     (
                         "title", 
                         new UnaryParser<Article>((query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
@@ -2770,6 +2770,57 @@ namespace YesSql.Tests
                 Assert.Equal(1, await searchQuery.CountAsync());
             }
         }  
+
+
+        [Theory]
+        [InlineData("steve")]
+        [InlineData("title:steve")]
+        public async Task ShouldParseDefaultTermQuery(string search)
+        {
+            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
+
+            using (var session = _store.CreateSession())
+            {
+                var billsArticle = new Article
+                {
+                    Title = "Article by bill about rabbits"
+                };
+
+                var stevesArticle = new Article
+                {
+                    Title = "Post by steve about cats"
+                };
+
+                session.Save(billsArticle);
+                session.Save(stevesArticle);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var searchQuery = session.Query<Article>();
+
+                var parser = new QueryParser<Article>(new []
+                {
+                    new DefaultTermParser<Article>
+                    (
+                        "title", 
+                        new UnaryParser<Article>((query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
+                    )
+                });
+
+                var parsed = parser.Parse(search);
+
+                parsed.Build(searchQuery);
+
+                // Normal yesql query
+                Assert.Equal("Post by steve about cats", (await session.Query().For<Article>().With<ArticleByPublishedDate>(x => x.Title.Contains("Steve")).FirstOrDefaultAsync()).Title);
+                Assert.Equal(1, await session.Query().For<Article>().With<ArticleByPublishedDate>(x => x.Title.Contains("Steve")).CountAsync());
+
+                // Built query.
+                Assert.Equal("Post by steve about cats", (await searchQuery.FirstOrDefaultAsync()).Title);
+                Assert.Equal(1, await searchQuery.CountAsync());
+            }
+        }          
 
         
         [Fact]
@@ -2799,10 +2850,10 @@ namespace YesSql.Tests
                 var search = "title:bill post";
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new TermParser<Article>[]
+                var parser = new QueryParser<Article>(new []
                 {
                     // just starting to work on the generics.
-                    new TermParser<Article>
+                    new NamedTermParser<Article>
                     (
                         "title", 
                         new BooleanParser<Article>(
@@ -2856,10 +2907,10 @@ namespace YesSql.Tests
                 var search = "title:bill AND rabbits";
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new TermParser<Article>[]
+                var parser = new QueryParser<Article>(new []
                 {
                     // just starting to work on the generics.
-                    new TermParser<Article>
+                    new NamedTermParser<Article>
                     (
                         "title", 
                         new BooleanParser<Article>(
@@ -2915,10 +2966,10 @@ namespace YesSql.Tests
 
                 // NOTES: The OR should be the top node. it's not AND is the top node.
 
-                var parser = new QueryParser<Article>(new TermParser<Article>[]
+                var parser = new QueryParser<Article>(new []
                 {
                     // just starting to work on the generics.
-                    new TermParser<Article>
+                    new NamedTermParser<Article>
                     (
                         "title", 
                         new BooleanParser<Article>(
@@ -2987,10 +3038,10 @@ namespace YesSql.Tests
                 var search = "title:((beach AND sand) OR (mountain AND lake)) NOT lizards";
                 var searchQuery = session.Query<Article>();
 
-                var parser = new QueryParser<Article>(new TermParser<Article>[]
+                var parser = new QueryParser<Article>(new []
                 {
                     // just starting to work on the generics.
-                    new TermParser<Article>
+                    new NamedTermParser<Article>
                     (
                         "title", 
                         new BooleanParser<Article>(

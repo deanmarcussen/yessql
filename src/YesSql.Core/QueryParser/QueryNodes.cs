@@ -43,15 +43,15 @@ namespace YesSql.Core.QueryParser
         public abstract string ToNormalizedString();
     }
 
-    public class TermNode<T> : QueryNode<T> where T : class
+    public abstract class TermNode<T> : QueryNode<T> where T : class
     {
-        public TermNode(string value, OperatorNode<T> operation)
+        public TermNode(string termName, OperatorNode<T> operation)
         {
-            Value = value;
+            TermName = termName;
             Operation = operation;
         }
 
-        public string Value { get; }
+        public string TermName { get; }
         public OperatorNode<T> Operation { get; }
 
         public override Func<IQuery<T>, IQuery<T>> Build(IQuery<T> query)
@@ -59,11 +59,33 @@ namespace YesSql.Core.QueryParser
             return Operation.Build(query);
         }
 
+    }
+
+    public class NamedTermNode<T> : TermNode<T> where T : class
+    {
+        public NamedTermNode(string termName, OperatorNode<T> operation) : base(termName, operation)
+        {
+        }
+
         public override string ToNormalizedString()
-            => $"{Value}:{Operation.ToNormalizedString()}";
+            => $"{TermName}:{Operation.ToNormalizedString()}";
 
         public override string ToString()
-            => $"{Value}:{Operation.ToString()}";
+            => $"{TermName}:{Operation.ToString()}";
+    }
+
+
+    public class DefaultTermNode<T> : TermNode<T> where T : class
+    {
+        public DefaultTermNode(string termName, OperatorNode<T> operation) : base(termName, operation)
+        {
+        }
+
+        public override string ToNormalizedString() // normalizing includes the term name even if not specified.
+            => $"{TermName}:{Operation.ToNormalizedString()}";
+
+        public override string ToString()
+            => $"{Operation.ToString()}";
     }
 
     public abstract class OperatorNode<T> : QueryNode<T> where T : class
@@ -79,6 +101,7 @@ namespace YesSql.Core.QueryParser
         }
 
         public string Value { get; }
+        public bool HasValue => !String.IsNullOrEmpty(Value);
         public Func<IQuery<T>, string, IQuery<T>> Query { get; }
 
         public override Func<IQuery<T>, IQuery<T>> Build(IQuery<T> query)
