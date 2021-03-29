@@ -10,7 +10,7 @@ namespace YesSql.Tests.Indexes
         public DateTime PublishedDateTime { get; set; }
     }
 
-    public class ArticleBydPublishedDateProvider : IndexProvider<Article>
+    public class ArticleByPublishedDateProvider : IndexProvider<Article>
     {
         public override void Describe(DescribeContext<Article> context)
         {

@@ -1220,12 +1220,6 @@ namespace YesSql.Services
                         _query._queryState._sqlBuilder.Selector(_query._queryState._sqlBuilder.FormatColumn(_query._queryState._documentTable, "*"));
                         _query._queryState._sqlBuilder.Distinct();
                         var sql = _query._queryState._sqlBuilder.ToSqlString();
-                        foreach(var p in _query._queryState._sqlBuilder.Parameters)
-                        {
-                            Console.WriteLine(p.Key + " " + p.Value);
-
-                        }
-                        Console.WriteLine(sql);
                         var key = new WorkerQueryKey(sql, _query._queryState._sqlBuilder.Parameters);
                         var documents = await _query._session._store.ProduceAsync(key, (args) =>
                         {
@@ -1281,12 +1275,24 @@ namespace YesSql.Services
 
             IQuery<T> IQuery<T>.Any(params Func<IQuery<T>, IQuery<T>>[] predicates)
             {
-                return ComposeQuery(predicates, new OrNode());
+                // Scope the currentPredicate so multiple calls will not act on the new predicate.
+                var currentPredicate = _query._queryState._currentPredicate;
+                var query = ComposeQuery(predicates, new OrNode());
+                // Return the currentPredicate to it's previous value, so another method call will act on the previous predicate.
+                _query._queryState._currentPredicate = currentPredicate;
+
+                return query;
             }
 
             IQuery<T> IQuery<T>.All(params Func<IQuery<T>, IQuery<T>>[] predicates)
             {
-                return ComposeQuery(predicates, new AndNode());
+                 // Scope the currentPredicate so multiple calls will not act on the new predicate.
+                var currentPredicate = _query._queryState._currentPredicate;
+                var query = ComposeQuery(predicates, new AndNode());
+                // Return the currentPredicate to it's previous value, so another method call will act on the previous predicate.
+                _query._queryState._currentPredicate = currentPredicate;
+
+                return query;
             }
 
             private IQuery<T> ComposeQuery(Func<IQuery<T>, IQuery<T>>[] predicates, CompositeNode predicate)
