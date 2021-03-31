@@ -38,9 +38,10 @@ namespace YesSql.Core.QueryParser
 
             var GroupNode = Between(Terms.Char('('), OperatorNode, Terms.Char(')'));
 
-            var SingleNode = Terms.String()
+            var SingleNode = Terms.String() // A term name is never enclosed in strings.
                 .Or(
-                    Terms.Identifier() // TODO when this is NonWhiteSpace it sucks up paranthese. Will Identifier catch accents, i.e. multilingual.
+                    // This must be aborted when it is consuming the next term.
+                    Terms.Identifier().AndSkip(Not(Literals.Char(':'))) // TODO when this is NonWhiteSpace it sucks up paranthese. Will Identifier catch accents, i.e. multilingual.
                 )
                     .Then<OperatorNode<T>>(x => new UnaryNode<T>(x.ToString(), matchQuery));
 

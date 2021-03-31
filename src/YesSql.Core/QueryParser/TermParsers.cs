@@ -46,8 +46,10 @@ namespace YesSql.Core.QueryParser
         public DefaultTermParser(string name, OperatorParser<T> operatorParser) : base(name)
         {
 
-            SeperatorParser = Terms.Text(name, caseInsensitive: true)
-                .SkipAnd(Literals.Char(':'));
+            SeperatorParser = Terms.Text(name, caseInsensitive: true).SkipAnd(Literals.Char(':'))
+                .Or(
+                    Literals.Char(' ').AndSkip(Literals.WhiteSpace()) // a default term is also seperated by a space
+                );
 
             var termParser = Terms.Text(name, caseInsensitive: true)
                 .AndSkip(Literals.Char(':'))

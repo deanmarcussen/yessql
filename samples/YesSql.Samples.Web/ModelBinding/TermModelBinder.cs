@@ -1,18 +1,21 @@
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Parlot.Fluent;
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
+using YesSql.Core.QueryParser;
 
 namespace YesSql.Search.ModelBinding
 {
-    public class StatementListModelBinder : IModelBinder
+    public class TermModelBinder<T> : IModelBinder where T : class
     {
-        private readonly ISearchParser _searchParser;
+        private readonly IQueryParser<T> _parser;
 
-        public StatementListModelBinder(ISearchParser searchParser)
+        public TermModelBinder(IQueryParser<T> parser)
         {
-            _searchParser = searchParser;
+            _parser = parser;
         }
+       
 
         public Task BindModelAsync(ModelBindingContext bindingContext)
         {
@@ -28,7 +31,7 @@ namespace YesSql.Search.ModelBinding
 
             if (valueProviderResult == ValueProviderResult.None)
             {
-                bindingContext.Result = ModelBindingResult.Success(new StatementList());
+                bindingContext.Result = ModelBindingResult.Success(new TermList<T>());
 
                 return Task.CompletedTask;
             }
@@ -40,14 +43,14 @@ namespace YesSql.Search.ModelBinding
             // Check if the argument value is null or empty
             if (string.IsNullOrEmpty(value))
             {
-                bindingContext.Result = ModelBindingResult.Success(new StatementList());
+                bindingContext.Result = ModelBindingResult.Success(new TermList<T>());
                 
                 return Task.CompletedTask;
             }
 
-            var statementList = _searchParser.ParseSearch(value);
+            var termList = _parser.Parse(value);
 
-            bindingContext.Result = ModelBindingResult.Success(statementList);
+            bindingContext.Result = ModelBindingResult.Success(termList);
             
             return Task.CompletedTask;
         }

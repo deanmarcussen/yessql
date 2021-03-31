@@ -2949,20 +2949,7 @@ namespace YesSql.Tests
             {
                 var search = "title:(beach AND sand) OR (mountain AND lake)";
                 var searchQuery = session.Query<Article>();
-
-                // var parser = new QueryParser<Article>(new []
-                // {
-                //     // just starting to work on the generics.
-                //     new NamedTermParser<Article>
-                //     (
-                //         "title", 
-                //         new BooleanParser<Article>(
-                //             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                //             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
-                //         )
-                //     )
-                // });
-
+   
                 var parser = QueryParser(
                     NamedTermParser("title",
                         ManyConditionParser<Article>(
@@ -3026,23 +3013,9 @@ namespace YesSql.Tests
 
             using (var session = _store.CreateSession())
             {
-                // boolean : ((beach AND sand) OR (mountain AND lake)) NOT lizards
-                
+                // boolean : ((beach AND sand) OR (mountain AND lake)) NOT lizards 
                 var search = "title:((beach AND sand) OR (mountain AND lake)) NOT lizards";
                 var searchQuery = session.Query<Article>();
-
-                // var parser = new QueryParser<Article>(new []
-                // {
-                //     // just starting to work on the generics.
-                //     new NamedTermParser<Article>
-                //     (
-                //         "title", 
-                //         new BooleanParser<Article>(
-                //             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                //             (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
-                //         )
-                //     )
-                // });
 
                 var parser = QueryParser(
                     NamedTermParser("title",
@@ -3084,6 +3057,66 @@ namespace YesSql.Tests
 
 
         [Fact]
+        public async Task ShouldParseNotBooleanQuery()
+        {
+            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
+
+            using (var session = _store.CreateSession())
+            {
+                var billsArticle = new Article
+                {
+                    Title = "Article by bill about rabbits"
+                };
+
+                var stevesArticle = new Article
+                {
+                    Title = "Post by steve about cats"
+                };
+
+                var paulsArticle = new Article
+                {
+                    Title = "Blog by paul about chickens"
+                };                
+
+                session.Save(billsArticle);
+                session.Save(stevesArticle);
+                session.Save(paulsArticle);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                var search = "title:NOT steve";          
+                var searchQuery = session.Query<Article>();
+
+                var parser = QueryParser(
+                    NamedTermParser("title",
+                        ManyConditionParser<Article>(
+                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
+                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))    
+                        )
+                    )
+                );
+
+                var parsed = parser.Parse(search);
+
+                parsed.Build(searchQuery);  
+
+                var yesqlQuery = session.Query().For<Article>()
+                    .All(
+                        x => x.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains("steve")))
+                    )
+                    ;
+
+                // Normal yesql query
+                Assert.Equal(2, await yesqlQuery.CountAsync());
+
+                // Built query.
+                Assert.Equal(2, await searchQuery.CountAsync());
+            }
+        }   
+
+
+        [Fact]
         public async Task ShouldParseNotQuery()
         {
             _store.RegisterIndexes<ArticleByPublishedDateProvider>();
@@ -3100,14 +3133,33 @@ namespace YesSql.Tests
                     Title = "Post by steve about cats"
                 };
 
+                var paulsArticle = new Article
+                {
+                    Title = "Blog by paul about chickens"
+                };                
+
                 session.Save(billsArticle);
                 session.Save(stevesArticle);
+                session.Save(paulsArticle);
             }
 
             using (var session = _store.CreateSession())
             {
-                // var search = "title:about NOT steve";// same as var search = "title:steve OR Post"; or var search = "title:steve || Post";
+                var search = "title:about NOT steve";          
+                var searchQuery = session.Query<Article>();
 
+                var parser = QueryParser(
+                    NamedTermParser("title",
+                        ManyConditionParser<Article>(
+                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
+                            (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))    
+                        )
+                    )
+                );
+
+                var parsed = parser.Parse(search);
+
+                parsed.Build(searchQuery);  
 
                 var yesqlQuery = session.Query().For<Article>()
                     .All(
@@ -3119,13 +3171,13 @@ namespace YesSql.Tests
                     ;
 
                 // Normal yesql query
-                Assert.Equal(1, await yesqlQuery.CountAsync());
+                Assert.Equal(2, await yesqlQuery.CountAsync());
 
                 // Built query.
                 // Assert.Equal("Post by steve about cats", (await searchQuery.FirstOrDefaultAsync()).Title);
-                // Assert.Equal(1, await searchQuery.CountAsync());
+                Assert.Equal(2, await searchQuery.CountAsync());
             }
-        }                        
+        }                               
 /*
         [Fact]
         public async Task ShouldSearchQueryIndexPropertyCustomWhereMatch()

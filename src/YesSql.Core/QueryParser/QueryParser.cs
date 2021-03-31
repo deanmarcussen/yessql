@@ -1,5 +1,6 @@
 using Parlot;
 using Parlot.Fluent;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using YesSql.Search;
@@ -7,7 +8,12 @@ using static Parlot.Fluent.Parsers;
 
 namespace YesSql.Core.QueryParser
 {
-    public class QueryParser<T> : Parser<TermList<T>> where T : class
+    public interface IQueryParser<T> where T : class
+    {
+        TermList<T> Parse(string text);
+    }
+
+    public class QueryParser<T> : IQueryParser<T> where T : class
     {
         private static Parser<List<V>> _customSeparated<U, V>(Parser<U> separator, Parser<V> parser) => new CustomSeparated<U, V>(separator, parser);
 
@@ -25,11 +31,24 @@ namespace YesSql.Core.QueryParser
 
         protected Parser<TermList<T>> Parser { get; }
 
-        public override bool Parse(ParseContext context, ref ParseResult<TermList<T>> result)
+        public TermList<T> Parse(string text)
         {
-            context.EnterParser(this);
+            if (String.IsNullOrEmpty(text))
+            {
+                return new TermList<T>();
+            }
 
-            return Parser.Parse(context, ref result);
+            var context = new ParseContext(new Scanner(text));
+
+            ParseResult<TermList<T>> result = default(ParseResult<TermList<T>>);
+            if (Parser.Parse(context, ref result))
+            {
+                return result.Value;
+            }
+            else
+            {
+                return new TermList<T>();
+            }
         }
     }
 }
