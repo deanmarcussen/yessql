@@ -36,7 +36,8 @@ namespace YesSql.Core.QueryParser
                     OrTextOperators
                 );
 
-            var GroupNode = Between(Terms.Char('('), OperatorNode, Terms.Char(')'));
+            var GroupNode = Between(Terms.Char('('), OperatorNode, Terms.Char(')'))
+                .Then<OperatorNode<T>>(static x => new GroupNode<T>(x));
 
             var SingleNode = Terms.String() // A term name is never enclosed in strings.
                 .Or(

@@ -125,4 +125,28 @@ namespace YesSql.Core.QueryParser
         public override string ToString()
             => $"{Left.ToString()} {Value} {Right.ToString()}";
     }
+
+    /// <summary>
+    /// Marks a node as being produced by a group request, i.e. () were specified
+    /// </summary>
+
+    public class GroupNode<T> : OperatorNode<T> where T : class
+    {
+        public GroupNode(OperatorNode<T> operation)
+        {
+            Operation = operation;
+        }
+
+        public OperatorNode<T> Operation { get; }
+
+        public override Func<IQuery<T>, IQuery<T>> Build(IQuery<T> query)
+            => Operation.Build(query);
+
+        public override string ToNormalizedString()
+            => ToString();
+
+        public override string ToString()
+            => $"({Operation.ToString()})";
+    }
+
 }

@@ -240,5 +240,26 @@ namespace YesSql.Tests.QueryParserTests
 
             Assert.Equal(normalized, result.ToNormalizedString());
         }
+
+        [Theory]
+        [InlineData("title:(bill)", "title:(bill)")]
+        [InlineData("title:(bill AND steve) OR Paul", "title:((bill AND steve) OR Paul)")]
+        [InlineData("title:((bill AND steve) OR Paul)", "title:((bill AND steve) OR Paul)")]
+        public void ShouldGroup(string search, string normalized)
+        {
+            var parser = QueryParser(
+                NamedTermParser("title",
+                    ManyConditionParser<Article>(
+                        (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
+                        (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
+                    )
+                )
+            );
+
+            var result = parser.Parse(search);
+
+            Assert.Equal(search, result.ToString());
+            Assert.Equal(normalized, result.ToNormalizedString());
+        }        
     }
 }
