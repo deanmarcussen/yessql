@@ -1,6 +1,7 @@
 using Parlot;
 using Parlot.Fluent;
 using System;
+using System.Threading.Tasks;
 using static Parlot.Fluent.Parsers;
 
 namespace YesSql.Core.QueryParser
@@ -8,7 +9,10 @@ namespace YesSql.Core.QueryParser
 
     public class BooleanParser<T> : OperatorParser<T> where T : class
     {
-        public BooleanParser(Func<IQuery<T>, string, IQuery<T>> matchQuery, Func<IQuery<T>, string, IQuery<T>> notMatchQuery)
+        private readonly Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> _matchQuery;
+        private readonly Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> _notMatchQuery;
+
+        private BooleanParser()
         {
             var OperatorNode = Deferred<OperatorNode<T>>();
 
@@ -44,7 +48,7 @@ namespace YesSql.Core.QueryParser
                     // This must be aborted when it is consuming the next term.
                     Terms.Identifier().AndSkip(Not(Literals.Char(':'))) // TODO when this is NonWhiteSpace it sucks up paranthese. Will Identifier catch accents, i.e. multilingual.
                 )
-                    .Then<OperatorNode<T>>(x => new UnaryNode<T>(x.ToString(), matchQuery));
+                    .Then<OperatorNode<T>>(x => new UnaryNode<T>(x.ToString(), _matchQuery));
 
             var Primary = SingleNode.Or(GroupNode);
 
@@ -55,7 +59,7 @@ namespace YesSql.Core.QueryParser
                     var unaryNode = x.Item2 as UnaryNode<T>;
 
                     // TODO test what actually happens when just using NOT foo
-                    return new NotUnaryNode<T>(x.Item1, new UnaryNode<T>(unaryNode.Value, notMatchQuery));
+                    return new NotUnaryNode<T>(x.Item1, new UnaryNode<T>(unaryNode.Value, _notMatchQuery));
                 })
                 .Or(Primary);
 
@@ -83,8 +87,8 @@ namespace YesSql.Core.QueryParser
                    {
                        result = op.Item1 switch
                        {
-                           "NOT" => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, notMatchQuery), op.Item1),
-                           "!" => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, notMatchQuery), op.Item1),
+                           "NOT" => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, _notMatchQuery), op.Item1),
+                           "!" => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, _notMatchQuery), op.Item1),
                            "OR" => new OrNode<T>(result, op.Item2, op.Item1),
                            "||" => new OrNode<T>(result, op.Item2, op.Item1),
                            " " => new OrNode<T>(result, op.Item2, op.Item1),
@@ -95,9 +99,23 @@ namespace YesSql.Core.QueryParser
                    return result;
                });
 
-            Parser = OperatorNode;
-
+            Parser = OperatorNode;    
         }
+
+
+        public BooleanParser(Func<string, IQuery<T>, IQuery<T>> matchQuery, Func<string, IQuery<T>, IQuery<T>> notMatchQuery) : this()
+        {
+            _matchQuery = (q, val, ctx) => new ValueTask<IQuery<T>>(matchQuery(q, val));   
+            _notMatchQuery = (q, val, ctx) => new ValueTask<IQuery<T>>(notMatchQuery(q, val));            
+        }
+
+        public BooleanParser(
+            Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> matchQuery, 
+            Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> notMatchQuery) : this()
+        {
+            _matchQuery = matchQuery;
+            _notMatchQuery = notMatchQuery;
+        }        
 
         protected Parser<OperatorNode<T>> Parser { get; private set; }
 

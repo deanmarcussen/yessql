@@ -35,7 +35,7 @@ namespace YesSql.Samples.Web
             services.AddSingleton<IQueryParser<BlogPost>>(sp =>
                 QueryParser(
                     NamedTermParser("status",
-                        OneConditionParser<BlogPost>((query, val) =>
+                        OneConditionParser<BlogPost>((val, query) =>
                         {
                             if (Enum.TryParse<ContentsStatus>(val, true, out var e))
                             {
@@ -58,8 +58,8 @@ namespace YesSql.Samples.Web
                     DefaultTermParser("title",
                         // OneConditionParser<BlogPost>(((query, val) => query.With<BlogPostIndex>(x => x.Title.Contains(val))))
                         ManyConditionParser<BlogPost>(
-                            ((query, val) => query.With<BlogPostIndex>(x => x.Title.Contains(val))),
-                            ((query, val) => query.With<BlogPostIndex>(x => x.Title.IsNotIn<BlogPostIndex>(s => s.Title, w => w.Title.Contains(val))))
+                            ((val, query) => query.With<BlogPostIndex>(x => x.Title.Contains(val))),
+                            ((val, query) => query.With<BlogPostIndex>(x => x.Title.IsNotIn<BlogPostIndex>(s => s.Title, w => w.Title.Contains(val))))
                         )
                     )
                 )

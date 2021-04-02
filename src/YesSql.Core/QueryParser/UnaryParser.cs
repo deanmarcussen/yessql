@@ -12,16 +12,29 @@ namespace YesSql.Core.QueryParser
 
     public class UnaryParser<T> : OperatorParser<T> where T : class
     {
-        public UnaryParser(Func<IQuery<T>, string, IQuery<T>> query)
+        // TODO make publically available, to can be retrieved for context dictionary.
+        private readonly Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> _query;
+
+       
+        public UnaryParser(Func<string, IQuery<T>, IQuery<T>> query)
         {
-            Parser = Terms.String()
+            _query = (q, val, ctx) => new ValueTask<IQuery<T>>(query(q, val));
+
+            // TODO stop parsing this through the parser.
+        }
+       
+
+        public UnaryParser(Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> query)
+        {
+            _query = query;
+        }        
+
+        protected Parser<OperatorNode<T>> Parser 
+            => Terms.String()
                 .Or(
                     Terms.NonWhiteSpace()
                 )
-                    .Then<OperatorNode<T>>(x => new UnaryNode<T>(x.ToString(), query)); // instance based. instance constructed only once per parser set.
-        }
-
-        protected Parser<OperatorNode<T>> Parser { get; private set; }
+                    .Then<OperatorNode<T>>(x => new UnaryNode<T>(x.ToString(), _query));
 
         public override bool Parse(ParseContext context, ref ParseResult<OperatorNode<T>> result)
         {

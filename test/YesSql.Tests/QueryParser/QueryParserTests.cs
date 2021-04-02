@@ -17,7 +17,7 @@ namespace YesSql.Tests.QueryParserTests
         {
             var parser = QueryParser(
                 NamedTermParser("name",
-                    OneConditionParser<Person>((query, val) => query.With<PersonByName>(x => x.SomeName.Contains(val)))
+                    OneConditionParser(PersonOneConditionQuery())
                 )
             );
 
@@ -30,10 +30,10 @@ namespace YesSql.Tests.QueryParserTests
         {
             var parser = QueryParser(
                 NamedTermParser("name",
-                    OneConditionParser<Person>((query, val) => query.With<PersonByName>(x => x.SomeName.Contains(val)))
+                    OneConditionParser<Person>(PersonOneConditionQuery())
                 ),
                 NamedTermParser("status",
-                    OneConditionParser<Person>((query, val) => query.With<PersonByName>(x => x.SomeName.Contains(val)))
+                    OneConditionParser<Person>(PersonOneConditionQuery())
                 )
             );
 
@@ -46,10 +46,10 @@ namespace YesSql.Tests.QueryParserTests
         {
             var parser = QueryParser(
                 NamedTermParser("name",
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 ),
                 NamedTermParser("status",
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 )
             );
 
@@ -62,10 +62,10 @@ namespace YesSql.Tests.QueryParserTests
         {
             var parser = QueryParser(
                 DefaultTermParser("name",
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 ),
                 NamedTermParser("status",
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 )
             );
 
@@ -78,10 +78,10 @@ namespace YesSql.Tests.QueryParserTests
         {
             var parser = QueryParser(
                 NamedTermParser("status",
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 ),
                 DefaultTermParser("name",
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 )
             );
 
@@ -96,10 +96,10 @@ namespace YesSql.Tests.QueryParserTests
             // so really the answer is if you have two manys. you cannot have a default.
             var parser = QueryParser(
                 DefaultTermParser("name",
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 ),
                 NamedTermParser("status",
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 )
             );
 
@@ -115,10 +115,10 @@ namespace YesSql.Tests.QueryParserTests
         {
             var parser = QueryParser(
                 NamedTermParser("age", 
-                    OneConditionParser<Person>(null)
+                    OneConditionParser<Person>(PersonOneConditionQuery())
                 ),
                 DefaultTermParser("name", 
-                    OneConditionParser<Person>(null)
+                    OneConditionParser<Person>(PersonOneConditionQuery())
                 )
             );
 
@@ -136,10 +136,10 @@ namespace YesSql.Tests.QueryParserTests
         {
             var parser = QueryParser(
                 NamedTermParser("age", 
-                    OneConditionParser<Person>(null)
+                    OneConditionParser<Person>(PersonOneConditionQuery())
                 ),
                 DefaultTermParser("name", 
-                    ManyConditionParser<Person>(null, null)
+                    ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
                 )
             );
 
@@ -157,7 +157,7 @@ namespace YesSql.Tests.QueryParserTests
         {
             var parser = QueryParser(
                 NamedTermParser("age",
-                    OneConditionParser<Person>((query, val) =>
+                    OneConditionParser<Person>((val, query) =>
                     {
                         if (Int32.TryParse(val, out var age))
                         {
@@ -168,7 +168,7 @@ namespace YesSql.Tests.QueryParserTests
                     })
                 ),
                 DefaultTermParser("name",
-                    OneConditionParser<Person>((query, val) => query.With<PersonByName>(x => x.SomeName.Contains(val)))
+                    OneConditionParser<Person>(PersonOneConditionQuery())
                 )
             );
 
@@ -182,11 +182,11 @@ namespace YesSql.Tests.QueryParserTests
         public void OrderOfDefaultTermShouldNotMatter()
         {
             var namedParser = NamedTermParser("age",
-                OneConditionParser<Person>(null) // TODO this is failing when it's a Many
+                OneConditionParser<Person>(PersonOneConditionQuery()) // TODO this is failing when it's a Many
             );
 
             var defaultParser = DefaultTermParser("name",
-                ManyConditionParser<Person>(null, null)
+                ManyConditionParser<Person>(PersonManyMatch(), PersonManyNotMatch())
             );
 
             var parser1 = QueryParser(
@@ -230,8 +230,8 @@ namespace YesSql.Tests.QueryParserTests
             var parser = QueryParser(
                 NamedTermParser("title",
                     ManyConditionParser<Article>(
-                        (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                        (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
+                        ArticleManyMatch(),
+                        ArticleManyNotMatch()
                     )
                 )
             );
@@ -250,8 +250,8 @@ namespace YesSql.Tests.QueryParserTests
             var parser = QueryParser(
                 NamedTermParser("title",
                     ManyConditionParser<Article>(
-                        (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                        (query, val) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
+                        ArticleManyMatch(),
+                        ArticleManyNotMatch()
                     )
                 )
             );
@@ -261,5 +261,28 @@ namespace YesSql.Tests.QueryParserTests
             Assert.Equal(search, result.ToString());
             Assert.Equal(normalized, result.ToNormalizedString());
         }        
+
+        private static Func<string, IQuery<Person>, IQuery<Person>> PersonOneConditionQuery()
+        {
+            return (val, query) => query.With<PersonByName>(x => x.SomeName.Contains(val));
+        }
+
+        private static Func<string, IQuery<Person>, IQuery<Person>> PersonManyMatch()
+            => PersonOneConditionQuery();
+
+        private static Func<string, IQuery<Person>, IQuery<Person>> PersonManyNotMatch()
+        {
+            return (val, query) => query.With<PersonByName>(x => x.SomeName.IsNotIn<PersonByName>(s => s.SomeName, w => w.SomeName.Contains(val)));
+        }         
+
+        private static Func<string, IQuery<Article>, IQuery<Article>> ArticleManyMatch()
+        {
+            return (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val));
+        } 
+
+        private static Func<string, IQuery<Article>, IQuery<Article>> ArticleManyNotMatch()
+        {
+            return (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)));
+        }                        
     }
 }
