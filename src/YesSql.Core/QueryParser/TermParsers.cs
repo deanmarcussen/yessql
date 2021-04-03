@@ -5,10 +5,9 @@ using static Parlot.Fluent.Parsers;
 
 namespace YesSql.Core.QueryParser
 {
-    public abstract class TermParser<T> : Parser<TermNode<T>> where T : class
+    public abstract class TermParserBuilder<T> where T : class
     {
-
-        public TermParser(string name)
+        public TermParserBuilder(string name)
         {
             Name = name;
         }
@@ -16,56 +15,40 @@ namespace YesSql.Core.QueryParser
         public string Name { get; }
         public bool OneOrMany { get; }
 
-        public BooleanTermQueryOption<T> TermQueryOption { get; internal set; }
+        public TermQueryOption<T> TermQueryOption { get; internal set; }
 
 
-        public Parser<TermNode<T>> Parser { get; internal set; }
+        public Parser<TermNode> Parser { get; internal set; }
         public Parser<char> SeperatorParser { get; internal set; }
-
-        public override bool Parse(ParseContext context, ref ParseResult<TermNode<T>> result)
-        {
-            context.EnterParser(this);
-            var ctx = (QueryParseContext<T>)context;
-
-            if (ctx.TermOptions.TryGetValue(Name, out var current))
-            {
-                ctx.CurrentTermOption = current;
-            }
-            try
-            {
-                return Parser.Parse(context, ref result);
-            }
-            finally
-            {
-                ctx.CurrentTermOption = null;
-            }
-        }
     }
 
     // Options here for One, or Many
 
-    public class NamedTermParser<T> : TermParser<T> where T : class
+    public class NamedTermParserBuilder<T> : TermParserBuilder<T> where T : class
     {
-        public NamedTermParser(string name, OperatorParser<T> operatorParser) : base(name)
+        public NamedTermParserBuilder(string name, OperatorParserBuilder<T> operatorParserBuilder) : base(name)
         {
+            var operatorParser = operatorParserBuilder.Parser;
+
             SeperatorParser = Terms.Text(name, caseInsensitive: true)
                 .SkipAnd(Literals.Char(':'));
 
             var parser = Terms.Text(name, caseInsensitive: true)
                 .AndSkip(Literals.Char(':'))
                 .And(operatorParser)
-                    .Then<TermNode<T>>(static x => new NamedTermNode<T>(x.Item1, x.Item2));
+                    .Then<TermNode>(static x => new NamedTermNode(x.Item1, x.Item2));
 
             Parser = parser;
 
-            TermQueryOption = operatorParser.TermQueryOption;
+            TermQueryOption = operatorParserBuilder.TermQueryOption;
         }
     }
 
-    public class DefaultTermParser<T> : TermParser<T> where T : class
+    public class DefaultTermParserBuilder<T> : TermParserBuilder<T> where T : class
     {
-        public DefaultTermParser(string name, OperatorParser<T> operatorParser) : base(name)
+        public DefaultTermParserBuilder(string name, OperatorParserBuilder<T> operatorParserBuilder) : base(name)
         {
+            var operatorParser = operatorParserBuilder.Parser;
 
             SeperatorParser = Terms.Text(name, caseInsensitive: true).SkipAnd(Literals.Char(':'))
                 .Or(
@@ -75,15 +58,15 @@ namespace YesSql.Core.QueryParser
             var termParser = Terms.Text(name, caseInsensitive: true)
                 .AndSkip(Literals.Char(':'))
                 .And(operatorParser)
-                    .Then<TermNode<T>>(static x => new NamedTermNode<T>(x.Item1, x.Item2));
+                    .Then<TermNode>(static x => new NamedTermNode(x.Item1, x.Item2));
 
-            var defaultParser = operatorParser.Then<TermNode<T>>(x => new DefaultTermNode<T>(name, x));
+            var defaultParser = operatorParser.Then<TermNode>(x => new DefaultTermNode(name, x));
 
             var parser = termParser.Or(defaultParser);
 
             Parser = parser;
 
-            TermQueryOption = operatorParser.TermQueryOption;
+            TermQueryOption = operatorParserBuilder.TermQueryOption;
         }
     }
 }

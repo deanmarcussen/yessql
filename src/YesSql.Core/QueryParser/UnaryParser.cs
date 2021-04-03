@@ -7,67 +7,34 @@ using static Parlot.Fluent.Parsers;
 
 namespace YesSql.Core.QueryParser
 {
-    public abstract class OperatorParser<T> : Parser<OperatorNode<T>> where T : class
+    public abstract class OperatorParserBuilder<T> where T : class
     {
-        public abstract BooleanTermQueryOption<T> TermQueryOption { get; }
+        public abstract TermQueryOption<T> TermQueryOption { get; }
+        public abstract Parser<OperatorNode> Parser { get; }
     }
 
-    public class UnaryParser<T> : OperatorParser<T> where T : class
+    public class UnaryParserBuilder<T> : OperatorParserBuilder<T> where T : class
     {
-        // TODO make publically available, to can be retrieved for context dictionary.
-        private readonly Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> _query;
-
-        // private UnaryParser()
-        // {
-        //     TermQueryOption = new UnaryTermQueryOption<T>(_query);
-        // }
-
-
-        public UnaryParser(Func<string, IQuery<T>, IQuery<T>> query) //: this()
+        public UnaryParserBuilder(Func<string, IQuery<T>, IQuery<T>> query)
         {
-            _query = (q, val, ctx) => new ValueTask<IQuery<T>>(query(q, val));
+            Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> valueQuery = (q, val, ctx) => new ValueTask<IQuery<T>>(query(q, val));
 
-            // TODO stop parsing this through the parser.
-            TermQueryOption = new BooleanTermQueryOption<T>(_query);
+            TermQueryOption = new TermQueryOption<T>(valueQuery);
         }
 
 
-        public UnaryParser(Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> query) //: this()
+        public UnaryParserBuilder(Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> query)
         {
-            _query = query;
-            TermQueryOption = new BooleanTermQueryOption<T>(_query);
+            TermQueryOption = new TermQueryOption<T>(query);
         }
 
-        public override BooleanTermQueryOption<T> TermQueryOption { get; }
+        public override TermQueryOption<T> TermQueryOption { get; }
 
-        protected Parser<OperatorNode<T>> Parser
+        public override Parser<OperatorNode> Parser
             => Terms.String()
                 .Or(
                     Terms.NonWhiteSpace()
                 )
-                    .Then<OperatorNode<T>>(static (context, node) => 
-                    {
-                        var ctx = (QueryParseContext<T>)context;
-                        var queryOption = (UnaryTermQueryOption<T>)ctx.CurrentTermOption.Query;
-
-                        return new UnaryNode<T>(node.ToString(), queryOption.MatchQuery);
-                    });
-
-        public override bool Parse(ParseContext context, ref ParseResult<OperatorNode<T>> result)
-        {
-            context.EnterParser(this);
-
-            return Parser.Parse(context, ref result);
-        }
-    }
-
-    public class UnaryTermQueryOption<T> : ITermQueryOption where T : class
-    {
-        public UnaryTermQueryOption(Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> matchQuery)
-        {
-            MatchQuery = matchQuery;
-        }
-
-        public Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> MatchQuery { get; }
+                    .Then<OperatorNode>(static (node) => new UnaryNode(node.ToString()));
     }
 }

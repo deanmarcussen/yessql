@@ -5,31 +5,31 @@ using System.Threading.Tasks;
 
 namespace YesSql.Core.QueryParser
 {
-    public abstract class QueryNode<T> where T : class
+    public abstract class QueryNode
     {
-        public abstract Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsync(IQuery<T> query, QueryExecutionContext<T> context);
+        public abstract Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context) where Tq : class;
 
         public abstract string ToNormalizedString();
     }
 
-    public abstract class TermNode<T> : QueryNode<T> where T : class
+    public abstract class TermNode : QueryNode 
     {
-        public TermNode(string termName, OperatorNode<T> operation)
+        public TermNode(string termName, OperatorNode operation)
         {
             TermName = termName;
             Operation = operation;
         }
 
         public string TermName { get; }
-        public OperatorNode<T> Operation { get; }
+        public OperatorNode Operation { get; }
 
-        public override Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsync(IQuery<T> query, QueryExecutionContext<T> context)
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
             => Operation.BuildAsync(query, context);            
     }
 
-    public class NamedTermNode<T> : TermNode<T> where T : class
+    public class NamedTermNode : TermNode 
     {
-        public NamedTermNode(string termName, OperatorNode<T> operation) : base(termName, operation)
+        public NamedTermNode(string termName, OperatorNode operation) : base(termName, operation)
         {
         }
 
@@ -41,9 +41,9 @@ namespace YesSql.Core.QueryParser
     }
 
 
-    public class DefaultTermNode<T> : TermNode<T> where T : class
+    public class DefaultTermNode : TermNode
     {
-        public DefaultTermNode(string termName, OperatorNode<T> operation) : base(termName, operation)
+        public DefaultTermNode(string termName, OperatorNode operation) : base(termName, operation)
         {
         }
 

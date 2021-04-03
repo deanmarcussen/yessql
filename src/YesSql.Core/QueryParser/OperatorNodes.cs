@@ -3,58 +3,36 @@ using System.Threading.Tasks;
 
 namespace YesSql.Core.QueryParser
 {
-    public abstract class OperatorNode<T> : QueryNode<T> where T : class
+    public abstract class OperatorNode : QueryNode
     {
     }
 
-    public class UnaryNode<T> : OperatorNode<T> where T : class
+    public class UnaryNode : OperatorNode
     {
 
-        public UnaryNode(string value, Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> query, bool useMatch = true)
+        public UnaryNode(string value, bool useMatch = true)
         {
             Value = value;
-            Query = query;
             UseMatch = useMatch;
         }        
 
         public string Value { get; }
         public bool UseMatch { get; }
         public bool HasValue => !String.IsNullOrEmpty(Value);
-        public Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> Query { get; }
 
-        // so one simpleoption could be just to have a flag on this node. match/notmatch.
-
-        // public override Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsync(IQuery<T> query, QueryExecutionContext context)
-        // {
-        //     return result => Query(Value, query, context);
-        // } 
-
-        public override Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsync(IQuery<T> query, QueryExecutionContext<T> context)
-            // => BuildAsyncInternal(query, context, ((UnaryTermQueryOption<T>)context.CurrentTermOption).Query);    
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
         {
-            // byt the time it gets to invoking steve. this is back to null.
-            // if (context.CurrentQuery == null)
-            // {
-            //     var t =  (UnaryTermQueryOption<T>)context.CurrentTermOption.Query;
-            //     context.CurrentQuery = t.MatchQuery;
-            // }
 
-            var q = context.CurrentTermOption.Query.MatchQuery;
-            if (!this.UseMatch)
+            var currentQuery = context.CurrentTermOption.Query.MatchQuery;
+            if (!UseMatch)
             {
-                q = context.CurrentTermOption.Query.NotMatchQuery;
+                currentQuery = context.CurrentTermOption.Query.NotMatchQuery;
             }
 
-            // var t =  (UnaryTermQueryOption<T>)context.CurrentTermOption.Query;
-            var result = BuildAsyncInternal(query, context, q);
-            // so it works when you don't reset the current query.
-            // but that won't work properly when multiples are in.
-            // context.CurrentQuery = null;
-
-            return result;
+            return BuildAsyncInternal(query, context, currentQuery);
         } 
 
-        private Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsyncInternal(IQuery<T> query, QueryExecutionContext<T> context, Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> queryMethod)
+        private Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsyncInternal<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context, Func<string, IQuery<Tq>, QueryExecutionContext<Tq>, ValueTask<IQuery<Tq>>> queryMethod) where Tq : class
         {
             return result => queryMethod(Value, query, context);
         }         
@@ -66,39 +44,23 @@ namespace YesSql.Core.QueryParser
             => $"{Value.ToString()}";
     }
 
-    public class NotUnaryNode<T> : OperatorNode<T> where T : class
+    public class NotUnaryNode : OperatorNode
     {
-        public NotUnaryNode(string operatorValue, UnaryNode<T> operation)
+        public NotUnaryNode(string operatorValue, UnaryNode operation)
         {
             OperatorValue = operatorValue;
             Operation = operation;
         }
 
         public string OperatorValue { get; }
-        public UnaryNode<T> Operation { get; }
+        public UnaryNode Operation { get; }
 
-        public override Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsync(IQuery<T> query, QueryExecutionContext<T> context)
-        {          
-            // if (context.CurrentQuery == null)
-            // {
-                var t =  (BooleanTermQueryOption<T>)context.CurrentTermOption.Query;
-                context.CurrentQuery = t.NotMatchQuery;
-            // }
-            var result = BuildAsyncInternal(query, context);
-            // context.CurrentQuery = null;
-            return result;
-        }
-
-        private Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsyncInternal(IQuery<T> query, QueryExecutionContext<T> context)
-        {
-            Func<IQuery<T>, Task<IQuery<T>>> t = (q) => Operation.BuildAsync(query, context)(q).AsTask();
-
-
-            return result => new ValueTask<IQuery<T>>(query.AllAsync(
-                t
-                //  (q) => Operation.BuildAsync(query, context)(q).AsTask()
-            )); 
-        }        
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
+        {      
+            return result => new ValueTask<IQuery<Tq>>(query.AllAsync(
+                 (q) => Operation.BuildAsync(query, context)(q).AsTask()
+            ));              
+        }   
 
         public override string ToNormalizedString()
             => ToString();
@@ -107,22 +69,22 @@ namespace YesSql.Core.QueryParser
             => $"{OperatorValue} {Operation.ToString()}";
     }
 
-    public class OrNode<T> : OperatorNode<T> where T : class
+    public class OrNode : OperatorNode
     {
-        public OrNode(OperatorNode<T> left, OperatorNode<T> right, string value)
+        public OrNode(OperatorNode left, OperatorNode right, string value)
         {
             Left = left;
             Right = right;
             Value = value;
         }
 
-        public OperatorNode<T> Left { get; }
-        public OperatorNode<T> Right { get; }
+        public OperatorNode Left { get; }
+        public OperatorNode Right { get; }
         public string Value { get; }
 
-        public override Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsync(IQuery<T> query, QueryExecutionContext<T> context)
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
         {
-            return result => new ValueTask<IQuery<T>>(query.AnyAsync(
+            return result => new ValueTask<IQuery<Tq>>(query.AnyAsync(
                 (q) => Left.BuildAsync(query, context)(q).AsTask(),
                 (q) => Right.BuildAsync(query, context)(q).AsTask()
             ));
@@ -135,22 +97,22 @@ namespace YesSql.Core.QueryParser
             => $"{Left.ToString()} {Value} {Right.ToString()}";
     }
 
-    public class AndNode<T> : OperatorNode<T> where T : class
+    public class AndNode: OperatorNode 
     {
-        public AndNode(OperatorNode<T> left, OperatorNode<T> right, string value)
+        public AndNode(OperatorNode left, OperatorNode right, string value)
         {
             Left = left;
             Right = right;
             Value = value;
         }
 
-        public OperatorNode<T> Left { get; }
-        public OperatorNode<T> Right { get; }
+        public OperatorNode Left { get; }
+        public OperatorNode Right { get; }
         public string Value { get; }
 
-        public override Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsync(IQuery<T> query, QueryExecutionContext<T> context)
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
         {
-            return result => new ValueTask<IQuery<T>>(query.AllAsync(
+            return result => new ValueTask<IQuery<Tq>>(query.AllAsync(
                 (q) => Left.BuildAsync(query, context)(q).AsTask(),
                 (q) => Right.BuildAsync(query, context)(q).AsTask()
             ));
@@ -163,9 +125,9 @@ namespace YesSql.Core.QueryParser
             => $"{Left.ToString()} {Value} {Right.ToString()}";
     }
 
-    public class NotNode<T> : AndNode<T> where T : class
+    public class NotNode : AndNode
     {
-        public NotNode(OperatorNode<T> left, OperatorNode<T> right, string value) : base(left, right, value)
+        public NotNode(OperatorNode left, OperatorNode right, string value) : base(left, right, value)
         {
         }
 
@@ -180,16 +142,16 @@ namespace YesSql.Core.QueryParser
     /// Marks a node as being produced by a group request, i.e. () were specified
     /// </summary>
 
-    public class GroupNode<T> : OperatorNode<T> where T : class
+    public class GroupNode : OperatorNode 
     {
-        public GroupNode(OperatorNode<T> operation)
+        public GroupNode(OperatorNode operation)
         {
             Operation = operation;
         }
 
-        public OperatorNode<T> Operation { get; }
+        public OperatorNode Operation { get; }
 
-        public override Func<IQuery<T>, ValueTask<IQuery<T>>> BuildAsync(IQuery<T> query, QueryExecutionContext<T> context)
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
             => Operation.BuildAsync(query, context);
 
         public override string ToNormalizedString()

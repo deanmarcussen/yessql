@@ -13,7 +13,7 @@ namespace YesSql.Core.QueryParser
 
     public class TermOption<T> where T : class
     {
-        public TermOption(bool oneOrMany, BooleanTermQueryOption<T> query)
+        public TermOption(bool oneOrMany, TermQueryOption<T> query)
         {
             OneOrMany = oneOrMany;
             Query = query;
@@ -24,13 +24,7 @@ namespace YesSql.Core.QueryParser
         /// </summary>
         public bool OneOrMany { get; }
 
-        public BooleanTermQueryOption<T> Query { get; }
-    }
-
-    // Marker only gets cast inside.
-    public interface ITermQueryOption
-    {
-
+        public TermQueryOption<T> Query { get; }
     }
 
     // This could be SearchScope
@@ -44,13 +38,13 @@ namespace YesSql.Core.QueryParser
             Terms = new();
         }
 
-        public TermList(List<TermNode<T>> terms, Dictionary<string, TermOption<T>> termOptions)
+        public TermList(List<TermNode> terms, Dictionary<string, TermOption<T>> termOptions)
         {
             Terms = terms;
             _termOptions = termOptions;
         }
 
-        public List<TermNode<T>> Terms { get; }
+        public List<TermNode> Terms { get; }
 
         // it's a function of termengine that decideds to add or replace.
         // not the parser itself.
@@ -64,14 +58,7 @@ namespace YesSql.Core.QueryParser
             {
                 // TODO optimize value task later.
 
-                // It's possible that context may at this point contain a CurrentQueryFunc property.
-                // Which might be set here from a lookup to a Dictionary.
-                // And then cast to mytype of queryfunc in the operation.
-
-                if (_termOptions.TryGetValue(term.TermName, out var currentTermOption))
-                {
-                    context.CurrentTermOption = currentTermOption;
-                }
+                context.CurrentTermOption = _termOptions[term.TermName];
 
                 var termQuery = term.BuildAsync(query, context);
                 await termQuery.Invoke(query);
@@ -100,8 +87,5 @@ namespace YesSql.Core.QueryParser
         public IServiceProvider ServiceProvider { get; }
 
         public TermOption<T> CurrentTermOption { get; set; }
-
-        public Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> CurrentQuery { get; set; }
     }
-
 }

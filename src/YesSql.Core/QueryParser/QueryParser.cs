@@ -17,19 +17,22 @@ namespace YesSql.Core.QueryParser
     {
         private static Parser<List<V>> _customSeparated<U, V>(Parser<U> separator, Parser<V> parser) => new CustomSeparated<U, V>(separator, parser);
 
-        public QueryParser(params TermParser<T>[] parsers)
+        public QueryParser(params TermParserBuilder<T>[] parsers)
         {
             // so this is useful, but doesn't work at all for queryies, because they're always returning funcs.
             // so changing current termoption is no use because it gets changed back before the func is invoked.
+
+            var builtParsers = new List<Parser<TermNode>>();
 
             foreach(var p in parsers)
             {
                 var termOption = new TermOption<T>(p.OneOrMany, p.TermQueryOption);
                 TermOptions[p.Name] = termOption;
+                builtParsers.Add(p.Parser);
             }
 
 
-            var Terms = OneOf(parsers);
+            var Terms = OneOf(builtParsers.ToArray());
 
             var Seperator = OneOf(parsers.Select(x => x.SeperatorParser).ToArray());
 
@@ -41,7 +44,7 @@ namespace YesSql.Core.QueryParser
                         var ctx = (QueryParseContext<T>)context;
 
                         return new TermList<T>(terms, ctx.TermOptions);
-                    }); // TODO static back up again.
+                    });
         }
 
         public Dictionary<string, TermOption<T>> TermOptions { get; } = new();

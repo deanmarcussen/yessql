@@ -7,14 +7,11 @@ using static Parlot.Fluent.Parsers;
 namespace YesSql.Core.QueryParser
 {
 
-    public class BooleanParser<T> : OperatorParser<T> where T : class
+    public class BooleanParserBuilder<T> : OperatorParserBuilder<T> where T : class
     {
-        private readonly Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> _matchQuery;
-        private readonly Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> _notMatchQuery;
-
-        private BooleanParser()
+        private BooleanParserBuilder()
         {
-            var OperatorNode = Deferred<OperatorNode<T>>();
+            var OperatorNode = Deferred<OperatorNode>();
 
             var AndOperator = Terms.Text("AND")
                 .Or(
@@ -41,63 +38,50 @@ namespace YesSql.Core.QueryParser
                 );
 
             var GroupNode = Between(Terms.Char('('), OperatorNode, Terms.Char(')'))
-                .Then<OperatorNode<T>>(static x => new GroupNode<T>(x));
+                .Then<OperatorNode>(static x => new GroupNode(x));
 
             var SingleNode = Terms.String() // A term name is never enclosed in strings.
                 .Or(
                     // This must be aborted when it is consuming the next term.
                     Terms.Identifier().AndSkip(Not(Literals.Char(':'))) // TODO when this is NonWhiteSpace it sucks up paranthese. Will Identifier catch accents, i.e. multilingual.
                 )
-                    .Then<OperatorNode<T>>(static (context, node) => 
-                    {
-                        var ctx = (QueryParseContext<T>)context;
-                        var queryOption = (BooleanTermQueryOption<T>)ctx.CurrentTermOption.Query;
-
-                        return new UnaryNode<T>(node.ToString(), queryOption.MatchQuery);
-                    });
+                    .Then<OperatorNode>(static (node) => new UnaryNode(node.ToString()));
 
             var Primary = SingleNode.Or(GroupNode);
 
             var UnaryNode = NotOperator.And(Primary)
-                .Then<OperatorNode<T>>(static (context, node) =>
+                .Then<OperatorNode>(static (node) =>
                 {
-                    var ctx = (QueryParseContext<T>)context;
-                    var queryOption = (BooleanTermQueryOption<T>)ctx.CurrentTermOption.Query;
                     // mutate with the neg query.
-                    var unaryNode = node.Item2 as UnaryNode<T>;
+                    var unaryNode = node.Item2 as UnaryNode;
 
                     // TODO test what actually happens when just using NOT foo
-                    return new NotUnaryNode<T>(node.Item1, new UnaryNode<T>(unaryNode.Value, queryOption.NotMatchQuery, false));
+                    return new NotUnaryNode(node.Item1, new UnaryNode(unaryNode.Value, false));
                 })
                 .Or(Primary);
 
             var AndNode = UnaryNode.And(ZeroOrMany(AndOperator.And(UnaryNode)))
-                .Then<OperatorNode<T>>(static node =>
+                .Then<OperatorNode>(static node =>
                 {
                     // unary
                     var result = node.Item1;
 
                     foreach (var op in node.Item2)
                     {
-                        result = new AndNode<T>(result, op.Item2, op.Item1);
+                        result = new AndNode(result, op.Item2, op.Item1);
                     }
 
                     return result;
                 });
 
             OperatorNode.Parser = AndNode.And(ZeroOrMany(NotOperator.Or(OrOperator).And(AndNode)))
-               .Then<OperatorNode<T>>(static (context, node) =>
+               .Then<OperatorNode>(static (node) =>
                {
-                    var ctx = (QueryParseContext<T>)context;
-                    var queryOption = (BooleanTermQueryOption<T>)ctx.CurrentTermOption.Query;
-
-                    static NotNode<T> CreateNotNode(OperatorNode<T> result, (string, OperatorNode<T>) op, BooleanTermQueryOption<T> queryOption)
-                        => new NotNode<T>(result, new UnaryNode<T>(((UnaryNode<T>)op.Item2).Value, queryOption.NotMatchQuery, false), op.Item1);
-                        // => new NotNode<T>(result, new NotUnaryNode<T>(op.Item1, (UnaryNode<T>)op.Item2), op.Item1);
-                        // => new NotNode<T>(result, new NotUnaryNode<T>(result, op.Item2, op.Item1);
+                    static NotNode CreateNotNode(OperatorNode result, (string, OperatorNode) op)
+                        => new NotNode(result, new UnaryNode(((UnaryNode)op.Item2).Value, false), op.Item1);
                     
-                    static OrNode<T> CreateOrNode(OperatorNode<T> result, (string, OperatorNode<T>) op)
-                        => new OrNode<T>(result, op.Item2, op.Item1);
+                    static OrNode CreateOrNode(OperatorNode result, (string, OperatorNode) op)
+                        => new OrNode(result, op.Item2, op.Item1);
 
                     // unary
                     var result = node.Item1;
@@ -106,8 +90,8 @@ namespace YesSql.Core.QueryParser
                     {
                         result = op.Item1 switch
                         {
-                            "NOT" => CreateNotNode(result, op, queryOption),
-                            "!" => CreateNotNode(result, op, queryOption),
+                            "NOT" => CreateNotNode(result, op),
+                            "!" => CreateNotNode(result, op),
                             "OR" => CreateOrNode(result, op),
                             "||" => CreateOrNode(result, op),
                             " " => CreateOrNode(result, op),
@@ -123,45 +107,22 @@ namespace YesSql.Core.QueryParser
         }
 
 
-        public BooleanParser(Func<string, IQuery<T>, IQuery<T>> matchQuery, Func<string, IQuery<T>, IQuery<T>> notMatchQuery) : this()
+        public BooleanParserBuilder(Func<string, IQuery<T>, IQuery<T>> matchQuery, Func<string, IQuery<T>, IQuery<T>> notMatchQuery) : this()
         {
-            _matchQuery = (q, val, ctx) => new ValueTask<IQuery<T>>(matchQuery(q, val));
-            _notMatchQuery = (q, val, ctx) => new ValueTask<IQuery<T>>(notMatchQuery(q, val));
-            TermQueryOption = new BooleanTermQueryOption<T>(_matchQuery, _notMatchQuery);
+            Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> valueMatch = (q, val, ctx) => new ValueTask<IQuery<T>>(matchQuery(q, val));
+            Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> valueNotMatch = (q, val, ctx) => new ValueTask<IQuery<T>>(notMatchQuery(q, val));
+            TermQueryOption = new TermQueryOption<T>(valueMatch, valueNotMatch);
         }
 
-        public BooleanParser(
+        public BooleanParserBuilder(
             Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> matchQuery,
             Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> notMatchQuery) : this()
         {
-            _matchQuery = matchQuery;
-            _notMatchQuery = notMatchQuery;
-            TermQueryOption = new BooleanTermQueryOption<T>(_matchQuery, _notMatchQuery);
+            TermQueryOption = new TermQueryOption<T>(matchQuery, notMatchQuery);
         }
 
-        protected Parser<OperatorNode<T>> Parser { get; private set; }
+        public override Parser<OperatorNode> Parser { get; }
 
-        public override BooleanTermQueryOption<T> TermQueryOption { get; }
-
-        public override bool Parse(ParseContext context, ref ParseResult<OperatorNode<T>> result)
-        {
-            context.EnterParser(this);
-
-            return Parser.Parse(context, ref result);
-        }
-    }
-
-    public class BooleanTermQueryOption<T> : UnaryTermQueryOption<T> where T : class
-    {
-        public BooleanTermQueryOption(Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> matchQuery) : base(matchQuery)
-        {
-        }
-
-        public BooleanTermQueryOption(Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> matchQuery, Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> notMatchQuery) : base(matchQuery)
-        {
-            NotMatchQuery = notMatchQuery;
-        }
-
-        public Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> NotMatchQuery { get; }
+        public override TermQueryOption<T> TermQueryOption { get; }
     }
 }
