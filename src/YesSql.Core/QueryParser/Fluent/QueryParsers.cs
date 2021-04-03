@@ -17,13 +17,13 @@ namespace YesSql.Core.QueryParser.Fluent
         public static UnaryParser<T> OneConditionParser<T>(Func<string, IQuery<T>, IQuery<T>> query) where T : class
             => new UnaryParser<T>(query);
 
-        public static UnaryParser<T> OneConditionParser<T>(Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> query) where T : class
+        public static UnaryParser<T> OneConditionParser<T>(Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> query) where T : class
             => new UnaryParser<T>(query);            
 
         public static BooleanParser<T> ManyConditionParser<T>(Func<string, IQuery<T>, IQuery<T>> matchQuery, Func<string, IQuery<T>, IQuery<T>> notMatchQuery) where T : class
             => new BooleanParser<T>(matchQuery, notMatchQuery);
 
-        public static BooleanParser<T> ManyConditionParser<T>(Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> matchQuery, Func<string, IQuery<T>, QueryExecutionContext, ValueTask<IQuery<T>>> notMatchQuery) where T : class
+        public static BooleanParser<T> ManyConditionParser<T>(Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> matchQuery, Func<string, IQuery<T>, QueryExecutionContext<T>, ValueTask<IQuery<T>>> notMatchQuery) where T : class
             => new BooleanParser<T>(matchQuery, notMatchQuery);            
     }
 }

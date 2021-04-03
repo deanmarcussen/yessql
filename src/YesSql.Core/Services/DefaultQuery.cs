@@ -1284,7 +1284,7 @@ namespace YesSql.Services
                 return query;
             }
 
-            ValueTask<IQuery<T>> IQuery<T>.AnyAsync(params Func<IQuery<T>, ValueTask<IQuery<T>>>[] predicates)
+            Task<IQuery<T>> IQuery<T>.AnyAsync(params Func<IQuery<T>, Task<IQuery<T>>>[] predicates)
             {
                 // Scope the currentPredicate so multiple calls will not act on the new predicate.
                 var currentPredicate = _query._queryState._currentPredicate;
@@ -1306,7 +1306,7 @@ namespace YesSql.Services
                 return query;
             }
 
-            ValueTask<IQuery<T>> IQuery<T>.AllAsync(params Func<IQuery<T>, ValueTask<IQuery<T>>>[] predicates)
+            Task<IQuery<T>> IQuery<T>.AllAsync(params Func<IQuery<T>, Task<IQuery<T>>>[] predicates)
             {
                 // Scope the currentPredicate so multiple calls will not act on the new predicate.
                 var currentPredicate = _query._queryState._currentPredicate;
@@ -1336,7 +1336,7 @@ namespace YesSql.Services
             }
 
 
-            private async ValueTask<IQuery<T>> ComposeQueryAsync(Func<IQuery<T>, ValueTask<IQuery<T>>>[] predicates, CompositeNode predicate)
+            private async Task<IQuery<T>> ComposeQueryAsync(Func<IQuery<T>, Task<IQuery<T>>>[] predicates, CompositeNode predicate)
             {
                 _query._queryState._currentPredicate.Children.Add(predicate);
 

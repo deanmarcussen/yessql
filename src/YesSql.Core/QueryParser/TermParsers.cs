@@ -5,27 +5,46 @@ using static Parlot.Fluent.Parsers;
 
 namespace YesSql.Core.QueryParser
 {
-    public abstract class TermParser<T> : Parser<TermNode<T>> where T: class
+    public abstract class TermParser<T> : Parser<TermNode<T>> where T : class
     {
-        public readonly string _name;
 
         public TermParser(string name)
         {
-            _name = name;
+            Name = name;
         }
+
+        public string Name { get; }
+        public bool OneOrMany { get; }
+
+        public BooleanTermQueryOption<T> TermQueryOption { get; internal set; }
+
 
         public Parser<TermNode<T>> Parser { get; internal set; }
         public Parser<char> SeperatorParser { get; internal set; }
-        
+
         public override bool Parse(ParseContext context, ref ParseResult<TermNode<T>> result)
         {
             context.EnterParser(this);
+            var ctx = (QueryParseContext<T>)context;
 
-            return Parser.Parse(context, ref result);
+            if (ctx.TermOptions.TryGetValue(Name, out var current))
+            {
+                ctx.CurrentTermOption = current;
+            }
+            try
+            {
+                return Parser.Parse(context, ref result);
+            }
+            finally
+            {
+                ctx.CurrentTermOption = null;
+            }
         }
     }
 
-    public class NamedTermParser<T> : TermParser<T> where T: class
+    // Options here for One, or Many
+
+    public class NamedTermParser<T> : TermParser<T> where T : class
     {
         public NamedTermParser(string name, OperatorParser<T> operatorParser) : base(name)
         {
@@ -38,10 +57,12 @@ namespace YesSql.Core.QueryParser
                     .Then<TermNode<T>>(static x => new NamedTermNode<T>(x.Item1, x.Item2));
 
             Parser = parser;
+
+            TermQueryOption = operatorParser.TermQueryOption;
         }
     }
 
-    public class DefaultTermParser<T> : TermParser<T> where T: class
+    public class DefaultTermParser<T> : TermParser<T> where T : class
     {
         public DefaultTermParser(string name, OperatorParser<T> operatorParser) : base(name)
         {
@@ -61,6 +82,8 @@ namespace YesSql.Core.QueryParser
             var parser = termParser.Or(defaultParser);
 
             Parser = parser;
+
+            TermQueryOption = operatorParser.TermQueryOption;
         }
-    }    
+    }
 }

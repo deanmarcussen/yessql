@@ -2678,15 +2678,7 @@ namespace YesSql.Tests
 
                 var parser = QueryParser(
                     NamedTermParser("title",
-                        // OneConditionParser<Article>((query, val) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
-
-                        // OneConditionParser<Article>((query, val, ctx) => 
-                        // {
-                        //     return Task.FromResult<IQuery<Article>>(query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)));
-                        //     // return query.With<ArticleByPublishedDate>(x => x.Title.Contains(val));
-                        // })
-
-                         OneConditionParser<Article>(async (val, query, ctx) => 
+                        OneConditionParser<Article>(async (val, query, ctx) => 
                         {
                             await Task.Delay(1);
                             // return Task.FromResult<IQuery<Article>>(query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)));

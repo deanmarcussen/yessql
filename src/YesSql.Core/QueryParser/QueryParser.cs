@@ -19,6 +19,16 @@ namespace YesSql.Core.QueryParser
 
         public QueryParser(params TermParser<T>[] parsers)
         {
+            // so this is useful, but doesn't work at all for queryies, because they're always returning funcs.
+            // so changing current termoption is no use because it gets changed back before the func is invoked.
+
+            foreach(var p in parsers)
+            {
+                var termOption = new TermOption<T>(p.OneOrMany, p.TermQueryOption);
+                TermOptions[p.Name] = termOption;
+            }
+
+
             var Terms = OneOf(parsers);
 
             var Seperator = OneOf(parsers.Select(x => x.SeperatorParser).ToArray());
@@ -26,8 +36,15 @@ namespace YesSql.Core.QueryParser
             Parser = _customSeparated(
                 Seperator,
                 Terms)
-                    .Then(static x => new TermList<T>(x));
+                    .Then(static (context, terms) => 
+                    {
+                        var ctx = (QueryParseContext<T>)context;
+
+                        return new TermList<T>(terms, ctx.TermOptions);
+                    }); // TODO static back up again.
         }
+
+        public Dictionary<string, TermOption<T>> TermOptions { get; } = new();
 
         protected Parser<TermList<T>> Parser { get; }
 
@@ -38,7 +55,7 @@ namespace YesSql.Core.QueryParser
                 return new TermList<T>();
             }
 
-            var context = new ParseContext(new Scanner(text));
+            var context = new QueryParseContext<T>(TermOptions, new Scanner(text));
 
             ParseResult<TermList<T>> result = default(ParseResult<TermList<T>>);
             if (Parser.Parse(context, ref result))
@@ -50,5 +67,17 @@ namespace YesSql.Core.QueryParser
                 return new TermList<T>();
             }
         }
+    }
+
+    public class QueryParseContext<T> : ParseContext where T : class
+    {
+        public QueryParseContext(Dictionary<string, TermOption<T>> termOptions, Scanner scanner, bool useNewLines = false) : base(scanner, useNewLines)
+        {
+            TermOptions = termOptions;
+        }
+
+        public Dictionary<string, TermOption<T>> TermOptions { get; }
+
+        public TermOption<T> CurrentTermOption { get; set; }
     }
 }
