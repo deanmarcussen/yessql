@@ -3145,30 +3145,35 @@ namespace YesSql.Tests
                     NamedTermParser("title",
                         ManyConditionParser<Article>(
                             (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))    
+                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val))).OrderByDescending(x => x.Title)   
                         )
                     )
                 );
 
                 var parsed = parser.Parse(search);
 
-                await parsed.ExecuteQueryAsync(searchQuery, null);  
+                await parsed.ExecuteQueryAsync(searchQuery, null);
 
+                // Order queries can be placed anywhere inside the booleans and they still get processed fine.  
                 var yesqlQuery = session.Query().For<Article>()
                     .All(
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains("steve")))
+                        x => x.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains("steve"))).OrderByDescending(x => x.Title)
                     )
                     .Any(
                         x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("about"))
                     )
                     ;
 
+                // yesqlQuery.
+
                 // Normal yesql query
                 Assert.Equal(2, await yesqlQuery.CountAsync());
+                Assert.Equal("Blog by paul about chickens", (await yesqlQuery.FirstOrDefaultAsync()).Title);
 
                 // Built query.
                 // Assert.Equal("Post by steve about cats", (await searchQuery.FirstOrDefaultAsync()).Title);
                 Assert.Equal(2, await searchQuery.CountAsync());
+                Assert.Equal("Blog by paul about chickens", (await searchQuery.FirstOrDefaultAsync()).Title);
             }
         }                               
  

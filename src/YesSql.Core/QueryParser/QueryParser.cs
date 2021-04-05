@@ -19,9 +19,6 @@ namespace YesSql.Core.QueryParser
 
         public QueryParser(params TermParserBuilder<T>[] parsers)
         {
-            // so this is useful, but doesn't work at all for queryies, because they're always returning funcs.
-            // so changing current termoption is no use because it gets changed back before the func is invoked.
-
             var builtParsers = new List<Parser<TermNode>>();
 
             foreach(var p in parsers)
@@ -31,10 +28,11 @@ namespace YesSql.Core.QueryParser
                 builtParsers.Add(p.Parser);
             }
 
-
             var Terms = OneOf(builtParsers.ToArray());
 
             var Seperator = OneOf(parsers.Select(x => x.SeperatorParser).ToArray());
+
+            // TODO this should be able to move to ZeroOrMany now.
 
             Parser = _customSeparated(
                 Seperator,

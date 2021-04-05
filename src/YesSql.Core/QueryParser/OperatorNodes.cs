@@ -20,21 +20,20 @@ namespace YesSql.Core.QueryParser
         public bool UseMatch { get; }
         public bool HasValue => !String.IsNullOrEmpty(Value);
 
-        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(QueryExecutionContext<Tq> context)
         {
-
             var currentQuery = context.CurrentTermOption.Query.MatchQuery;
             if (!UseMatch)
             {
                 currentQuery = context.CurrentTermOption.Query.NotMatchQuery;
             }
 
-            return BuildAsyncInternal(query, context, currentQuery);
+            return BuildAsyncInternal(context, currentQuery);
         } 
 
-        private Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsyncInternal<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context, Func<string, IQuery<Tq>, QueryExecutionContext<Tq>, ValueTask<IQuery<Tq>>> queryMethod) where Tq : class
+        private Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsyncInternal<Tq>(QueryExecutionContext<Tq> context, Func<string, IQuery<Tq>, QueryExecutionContext<Tq>, ValueTask<IQuery<Tq>>> queryMethod) where Tq : class
         {
-            return result => queryMethod(Value, query, context);
+            return result => queryMethod(Value, context.Query, context);
         }         
 
         public override string ToNormalizedString()
@@ -55,10 +54,10 @@ namespace YesSql.Core.QueryParser
         public string OperatorValue { get; }
         public UnaryNode Operation { get; }
 
-        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(QueryExecutionContext<Tq> context)
         {      
-            return result => new ValueTask<IQuery<Tq>>(query.AllAsync(
-                 (q) => Operation.BuildAsync(query, context)(q).AsTask()
+            return result => new ValueTask<IQuery<Tq>>(context.Query.AllAsync(
+                 (q) => Operation.BuildAsync(context)(q).AsTask()
             ));              
         }   
 
@@ -82,11 +81,11 @@ namespace YesSql.Core.QueryParser
         public OperatorNode Right { get; }
         public string Value { get; }
 
-        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(QueryExecutionContext<Tq> context)
         {
-            return result => new ValueTask<IQuery<Tq>>(query.AnyAsync(
-                (q) => Left.BuildAsync(query, context)(q).AsTask(),
-                (q) => Right.BuildAsync(query, context)(q).AsTask()
+            return result => new ValueTask<IQuery<Tq>>(context.Query.AnyAsync(
+                (q) => Left.BuildAsync(context)(q).AsTask(),
+                (q) => Right.BuildAsync(context)(q).AsTask()
             ));
         }
 
@@ -110,11 +109,11 @@ namespace YesSql.Core.QueryParser
         public OperatorNode Right { get; }
         public string Value { get; }
 
-        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(QueryExecutionContext<Tq> context)
         {
-            return result => new ValueTask<IQuery<Tq>>(query.AllAsync(
-                (q) => Left.BuildAsync(query, context)(q).AsTask(),
-                (q) => Right.BuildAsync(query, context)(q).AsTask()
+            return result => new ValueTask<IQuery<Tq>>(context.Query.AllAsync(
+                (q) => Left.BuildAsync(context)(q).AsTask(),
+                (q) => Right.BuildAsync(context)(q).AsTask()
             ));
         }
 
@@ -151,8 +150,8 @@ namespace YesSql.Core.QueryParser
 
         public OperatorNode Operation { get; }
 
-        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
-            => Operation.BuildAsync(query, context);
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(QueryExecutionContext<Tq> context)
+            => Operation.BuildAsync(context);
 
         public override string ToNormalizedString()
             => ToString();

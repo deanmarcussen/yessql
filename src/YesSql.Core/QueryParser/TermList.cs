@@ -52,7 +52,7 @@ namespace YesSql.Core.QueryParser
 
         public async Task<IQuery<T>> ExecuteQueryAsync(IQuery<T> query, IServiceProvider serviceProvider) //TODO if queryexecutioncontext provided, use that.
         {
-            var context = new QueryExecutionContext<T>(serviceProvider);
+            var context = new QueryExecutionContext<T>(query, serviceProvider);
 
             foreach (var term in Terms)
             {
@@ -60,14 +60,13 @@ namespace YesSql.Core.QueryParser
 
                 context.CurrentTermOption = _termOptions[term.TermName];
 
-                var termQuery = term.BuildAsync(query, context);
+                var termQuery = term.BuildAsync(context);
                 await termQuery.Invoke(query);
                 context.CurrentTermOption = null;
 
             }
 
             return query;
-            
         }        
 
         public string ToNormalizedString()
@@ -79,12 +78,14 @@ namespace YesSql.Core.QueryParser
 
     public class QueryExecutionContext<T> where T : class // struct?
     {
-        public QueryExecutionContext(IServiceProvider serviceProvider)
+        public QueryExecutionContext(IQuery<T> query, IServiceProvider serviceProvider)
         {
+            Query = query;
             ServiceProvider = serviceProvider;
         }
 
         public IServiceProvider ServiceProvider { get; }
+        public IQuery<T> Query { get; }
 
         public TermOption<T> CurrentTermOption { get; set; }
     }

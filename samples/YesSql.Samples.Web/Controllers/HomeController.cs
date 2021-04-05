@@ -36,7 +36,7 @@ namespace YesSql.Samples.Web.Controllers
             {
                 var query = session.Query<BlogPost>();
 
-                termList.Build(query);
+                await termList.ExecuteQueryAsync(query, HttpContext.RequestServices);
 
                 currentSearchText = termList.ToString();
 

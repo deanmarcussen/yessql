@@ -7,7 +7,7 @@ namespace YesSql.Core.QueryParser
 {
     public abstract class QueryNode
     {
-        public abstract Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context) where Tq : class;
+        public abstract Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(QueryExecutionContext<Tq> context) where Tq : class;
 
         public abstract string ToNormalizedString();
     }
@@ -23,8 +23,8 @@ namespace YesSql.Core.QueryParser
         public string TermName { get; }
         public OperatorNode Operation { get; }
 
-        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(IQuery<Tq> query, QueryExecutionContext<Tq> context)
-            => Operation.BuildAsync(query, context);            
+        public override Func<IQuery<Tq>, ValueTask<IQuery<Tq>>> BuildAsync<Tq>(QueryExecutionContext<Tq> context)
+            => Operation.BuildAsync(context);            
     }
 
     public class NamedTermNode : TermNode 
