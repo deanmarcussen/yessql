@@ -55,16 +55,22 @@ namespace YesSql.Data
         /// <inheritdoc />
         public bool Equals(WorkerQueryKey other)
         {
-            if (_parameters != null)
+            if (!string.Equals(other._prefix, _prefix, StringComparison.Ordinal))
             {
-                return string.Equals(other._prefix, _prefix, StringComparison.Ordinal) &&
-                SameParameters(_parameters, other._parameters)
-                ;
+                return false;
             }
-            else
+            
+            if (_parameters != null || other._parameters != null)
             {
-                return String.Equals(_prefix, other._prefix, StringComparison.Ordinal);
+                return SameParameters(_parameters, other._parameters);
             }
+            
+            if (_ids != null || other._ids != null)
+            {
+                return SameIds(_ids, other._ids);
+            }
+
+            return true;
         }
 
         private int BuildHashCode()
@@ -122,33 +128,58 @@ namespace YesSql.Data
                 return false;
             }
 
-            var enumerator1 = values1.GetEnumerator();
-            var enumerator2 = values2.GetEnumerator();
-
-            while (true)
+            foreach (var entry1 in values1)
             {
-                var hasMore1 = enumerator1.MoveNext();
-                var hasMore2 = enumerator2.MoveNext();
+                var key1 = entry1.Key;
 
-                if (!hasMore1 && !hasMore2)
-                {
-                    return true;
-                }
-
-                if (!hasMore1 || !hasMore2)
+                if (!values2.TryGetValue(key1, out var value2))
                 {
                     return false;
                 }
 
-                var current1 = enumerator1.Current;
-                var current2 = enumerator2.Current;
+                var value1 = entry1.Value;
 
-                if (!string.Equals(current1.Key, current2.Key, StringComparison.Ordinal) ||
-                    current1.Value != current2.Value)
+                if (value1 == null)
+                {
+                    if (value2 != null)
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (!value1.Equals(value2))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static bool SameIds(int[] values1, int[] values2)
+        {
+            // If one is not null both need to be non-null
+            if (!(values1 != null && values2 != null))
+            {
+                return false;
+            }
+
+            if (values1.Length != values2.Length)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < values1.Length; i++)
+            {
+                if (values1[i] != values2[i])
                 {
                     return false;
                 }
             }
+
+            return true;
         }
 
         private static bool SameIds(int[] values1, int[] values2)

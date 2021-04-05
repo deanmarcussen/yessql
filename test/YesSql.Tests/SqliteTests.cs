@@ -35,23 +35,6 @@ namespace YesSql.Tests
                 ;
         }
 
-        protected override void OnCleanDatabase(SchemaBuilder builder, DbTransaction transaction)
-        {
-            base.OnCleanDatabase(builder, transaction);
-
-            try
-            {
-                builder.DropTable("Content");
-            }
-            catch { }
-
-            try
-            {
-                builder.DropTable("Collection1_Content");
-            }
-            catch { }
-        }
-
         [Fact(Skip = "ReadCommitted is not supported by Sqlite")]
         public override Task ShouldReadCommittedRecords()
         {
@@ -80,6 +63,8 @@ namespace YesSql.Tests
                     session1.Save(p1);
 
                     Assert.Equal(1, p1.Id);
+
+                    await session1.SaveChangesAsync();
                 }
 
                 var store2 = await StoreFactory.CreateAndInitializeAsync(new Configuration().UseSqLite(connectionString).SetTablePrefix(TablePrefix).UseDefaultIdGenerator());

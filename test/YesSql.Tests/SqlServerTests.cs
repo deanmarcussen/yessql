@@ -30,23 +30,6 @@ namespace YesSql.Tests
                 ;
         }
 
-        protected override void OnCleanDatabase(SchemaBuilder builder, DbTransaction transaction)
-        {
-            base.OnCleanDatabase(builder, transaction);
-
-            try
-            {
-                builder.DropTable("Content");
-            }
-            catch { }
-
-            try
-            {
-                builder.DropTable("Collection1_Content");
-            }
-            catch { }
-        }
-
         [Fact]
         public async Task ShouldSeedExistingIds()
         {
@@ -76,6 +59,8 @@ namespace YesSql.Tests
                 session1.Save(p1);
 
                 Assert.Equal(1, p1.Id);
+
+                await session1.SaveChangesAsync();
             }
 
             var store2 = await StoreFactory.CreateAndInitializeAsync(new Configuration().UseSqlServer(ConnectionString).SetTablePrefix("Store1").UseBlockIdGenerator());
@@ -195,7 +180,7 @@ namespace YesSql.Tests
             {
                 if (session != null)
                 {
-                    Assert.Throws<SqlException>(() => session.Dispose());
+                    await Assert.ThrowsAsync<SqlException>(async () => await session.SaveChangesAsync());
                 }
             }
         }
@@ -248,7 +233,7 @@ namespace YesSql.Tests
             {
                 if (session != null)
                 {
-                    Assert.Throws<SqlException>(() => session.Dispose());
+                    await Assert.ThrowsAsync<SqlException>(async () => await session.SaveChangesAsync());
                 }
             }
         }
@@ -301,7 +286,7 @@ namespace YesSql.Tests
             {
                 if (session != null)
                 {
-                    Assert.Throws<SqlException>(() => session.Dispose());
+                    await Assert.ThrowsAsync<SqlException>(async () => await session.SaveChangesAsync());
                 }
             }
         }

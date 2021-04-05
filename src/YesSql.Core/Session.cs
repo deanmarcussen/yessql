@@ -16,35 +16,33 @@ namespace YesSql
 {
     public class Session : ISession
     {
+        private DbConnection _connection;
         private DbTransaction _transaction;
 
-        internal readonly List<IIndexCommand> _commands = new List<IIndexCommand>();
-        private readonly Dictionary<string, SessionState> CollectionStates;
+        internal List<IIndexCommand> _commands;
+        private readonly Dictionary<string, SessionState> _collectionStates;
         private readonly SessionState _defaultState;
-        protected readonly Dictionary<string, IEnumerable<IndexDescriptor>> _descriptors = new Dictionary<string, IEnumerable<IndexDescriptor>>();
+        private Dictionary<string, IEnumerable<IndexDescriptor>> _descriptors;
         internal readonly Store _store;
         private volatile bool _disposed;
-        private volatile bool _suppressedFinalize;
         private bool _flushing;
-        private IsolationLevel _isolationLevel;
-        private DbConnection _connection;
         protected bool _cancel;
+        protected bool _save;
         protected List<IIndexProvider> _indexes;
 
         protected string _tablePrefix;
         private readonly ISqlDialect _dialect;
         private readonly ILogger _logger;
 
-        public Session(Store store, IsolationLevel isolationLevel)
+        public Session(Store store)
         {
             _store = store;
-            _isolationLevel = isolationLevel;
             _tablePrefix = _store.Configuration.TablePrefix;
             _dialect = store.Dialect;
             _logger = store.Configuration.Logger;
 
             _defaultState = new SessionState();
-            CollectionStates = new Dictionary<string, SessionState>()
+            _collectionStates = new Dictionary<string, SessionState>()
             {
                 [""] = _defaultState
             };
@@ -77,10 +75,10 @@ namespace YesSql
                 return _defaultState;
             }
 
-            if (!CollectionStates.TryGetValue(collection, out var state))
+            if (!_collectionStates.TryGetValue(collection, out var state))
             {
                 state = new SessionState();
-                CollectionStates[collection] = state;
+                _collectionStates[collection] = state;
             }
 
             return state;
@@ -269,7 +267,7 @@ namespace YesSql
 
             doc.Id = id;
 
-            await DemandAsync();
+            await CreateConnectionAsync();
 
             var versionAccessor = _store.GetVersionAccessor(entity.GetType());
             if (versionAccessor != null)
@@ -288,6 +286,8 @@ namespace YesSql
             }
 
             doc.Content = Store.Configuration.ContentSerializer.Serialize(entity);
+
+            _commands ??= new List<IIndexCommand>();
 
             _commands.Add(new CreateDocumentCommand(doc, Store.Configuration.TableNameConvention, _tablePrefix, collection));
 
@@ -378,16 +378,18 @@ namespace YesSql
 
             await MapNew(oldDoc, entity, collection);
 
-            await DemandAsync();
+            await CreateConnectionAsync();
 
             oldDoc.Content = newContent;
+
+            _commands ??= new List<IIndexCommand>();
 
             _commands.Add(new UpdateDocumentCommand(oldDoc, Store, version, collection));
         }
 
         private async Task<Document> GetDocumentByIdAsync(int id, string collection)
         {
-            await DemandAsync();
+            await CreateConnectionAsync();
 
             var documentTable = Store.Configuration.TableNameConvention.GetDocumentTable(collection);
 
@@ -413,7 +415,7 @@ namespace YesSql
             }
             catch
             {
-                Cancel();
+                await CancelAsync();
 
                 throw;
             }            
@@ -463,6 +465,8 @@ namespace YesSql
                     // Update impacted indexes
                     await MapDeleted(doc, obj, collection);
 
+                    _commands ??= new List<IIndexCommand>();
+
                     // The command needs to come after any index deletion because of the database constraints
                     _commands.Add(new DeleteDocumentCommand(doc, Store, collection));
                 }
@@ -481,7 +485,7 @@ namespace YesSql
             // Auto-flush
             await FlushAsync();
 
-            await DemandAsync();
+            await CreateConnectionAsync();
 
             var documentTable = Store.Configuration.TableNameConvention.GetDocumentTable(collection);
 
@@ -507,7 +511,7 @@ namespace YesSql
             }
             catch
             {
-                Cancel();
+                await CancelAsync();
 
                 throw;
             }
@@ -622,98 +626,33 @@ namespace YesSql
             // Ensure the session gets disposed if the user cannot wrap the session in a using block.
             // For instance in OrchardCore the session is disposed from a middleware, so if an exception
             // is thrown in a middleware, it might not get triggered.
+            Dispose(false);
+        }
 
-            _cancel = true;
+        public void Dispose(bool disposing)
+        {
+            // Do nothing if Dispose() was already called
+            if (!_disposed)
+            {
+                try
+                {
+                    CommitOrRollbackTransaction();
+                }
+                catch
+                {
+                    _connection = null;
+                    _transaction = null;
+                }
+            }
 
-            Dispose();
+            _disposed = true;
         }
 
         public void Dispose()
         {
-            // Do nothing if Dispose() was already called
-            if (_disposed)
-            {
-                return; 
-            }
+            Dispose(true);
 
-            try
-            {
-                if (!_cancel && HasWork())
-                {
-                    // This should never go there, CommitAsync() should be called explicitely
-                    // and asynchronously before Dispose() is invoked
-                    FlushAsync().GetAwaiter().GetResult();
-                }
-            }
-            finally
-            {
-                _disposed = true;
-
-                CommitTransaction();
-
-                ReleaseSession();
-
-                GC.SuppressFinalize(this);
-
-                _suppressedFinalize = true;
-            }
-        }
-
-        /// <summary>
-        /// Clears all the resources associated to the session.
-        /// </summary>
-        private void ReleaseSession()
-        {
-            foreach (var state in CollectionStates.Values)
-            {
-                state.IdentityMap.Clear();
-            }
-
-            _descriptors.Clear();
-            _indexes?.Clear();
-
-            _store.ReleaseSession(this);
-        }
-
-        /// <summary>
-        /// Clears all the resources associated to the unit of work.
-        /// </summary>
-        private void ReleaseTransaction()
-        {
-            foreach (var state in CollectionStates.Values)
-            {
-                state.Concurrent.Clear();
-                state.Saved.Clear();
-                state.Updated.Clear();
-                state.Tracked.Clear();
-                state.Deleted.Clear();
-                state.Maps.Clear();
-            }
-
-            _commands.Clear();
-
-            if (_transaction != null)
-            {
-                _transaction.Dispose();
-                _transaction = null;
-            }
-        }
-
-        /// <summary>
-        /// Called when the instance is reused from an object pool and doesn't go
-        /// through the constructor.
-        /// </summary>
-        internal void StartLease(IsolationLevel isolationLevel)
-        {
-            _disposed = false;
-            _cancel = false;
-            _isolationLevel = isolationLevel;
-
-            if (_suppressedFinalize == true)
-            {
-                GC.ReRegisterForFinalize(this);
-                _suppressedFinalize = false;
-            }
+            GC.SuppressFinalize(this);
         }
 
         public async Task FlushAsync()
@@ -742,7 +681,7 @@ namespace YesSql
             try
             {
                 // saving all tracked entities
-                foreach (var collectionState in CollectionStates)
+                foreach (var collectionState in _collectionStates)
                 {
                     var state = collectionState.Value;
                     var collection = collectionState.Key;
@@ -784,20 +723,23 @@ namespace YesSql
 
                 BatchCommands();
 
-                foreach (var command in _commands)
+                if (_commands != null)
                 {
-                    await command.ExecuteAsync(_connection, _transaction, _dialect, _logger);
+                    foreach (var command in _commands)
+                    {
+                        await command.ExecuteAsync(_connection, _transaction, _dialect, _logger);
+                    }
                 }
             }
             catch
             {
-                Cancel();
+                await CancelAsync();
 
                 throw;
             }
             finally
             {
-                foreach (var state in CollectionStates.Values)
+                foreach (var state in _collectionStates.Values)
                 {
                     // Track all saved and updated entities in case they are modified before
                     // CommitAsync is called
@@ -817,14 +759,14 @@ namespace YesSql
                     state.Maps.Clear();
                 }
 
-                _commands.Clear();
+                _commands?.Clear();
                 _flushing = false;
             }
         }
 
         private void BatchCommands()
         {
-            if (_commands.Count == 0)
+            if (_commands != null && _commands.Count == 0)
             {
                 return;
             }
@@ -908,51 +850,52 @@ namespace YesSql
             _commands.AddRange(batches);
         }
 
-        public async Task CommitAsync()
+        public async Task SaveChangesAsync()
         {
             try
             {
                 if (!_cancel)
                 {
                     await FlushAsync();
+
+                    _save = true;
                 }
             }
             finally
             {
 #if SUPPORTS_ASYNC_TRANSACTIONS
-                await CommitTransactionAsync();
+                await CommitOrRollbackTransactionAsync();
 #else
-                CommitTransaction();
+                CommitOrRollbackTransaction();
 #endif
             }
         }
 
-        private void CommitTransaction()
+        private void CommitOrRollbackTransaction()
         {
             // This method is still used in Dispose() when SUPPORTS_ASYNC_TRANSACTIONS is defined
             try
             {
-                if (!_cancel)
-                {
-                    if (_transaction != null)
-                    {
-                        _transaction.Commit();
-                    }
-                }
-                else
+                if (_cancel || !_save)
                 {
                     if (_transaction != null)
                     {
                         _transaction.Rollback();
                     }
                 }
+                else
+                {
+                    if (_transaction != null)
+                    {
+                        _transaction.Commit();
+                    }
+                }                
             }
             finally
             {
                 ReleaseConnection();
             }
         }
-
 
 #if SUPPORTS_ASYNC_TRANSACTIONS
         public async ValueTask DisposeAsync()
@@ -963,30 +906,22 @@ namespace YesSql
                 return;
             }
 
+            _disposed = true;
+
             try
             {
-                if (!_cancel && HasWork())
-                {
-                    // This should never go there, CommitAsync() should be called explicitely
-                    // and asynchronously before Dispose() is invoked
-                    await FlushAsync();
-                }
+                await CommitOrRollbackTransactionAsync();
             }
-            finally
+            catch
             {
-                _disposed = true;
-
-                await CommitTransactionAsync();
-
-                ReleaseSession();
-
-                GC.SuppressFinalize(this);
-
-                _suppressedFinalize = true;
+                _transaction = null;
+                _connection = null;
             }
+
+            GC.SuppressFinalize(this);
         }
 
-        private async Task CommitTransactionAsync()
+        private async Task CommitOrRollbackTransactionAsync()
         {
             try
             {
@@ -1011,9 +946,35 @@ namespace YesSql
             }
         }
 
+        /// <summary>
+        /// Clears all the resources associated to the transaction.
+        /// </summary>
+        private async Task ReleaseTransactionAsync()
+        {
+            foreach (var state in _collectionStates.Values)
+            {
+                // IndentityMap is cleared in ReleaseSession()
+                state._concurrent?.Clear();
+                state._saved?.Clear();
+                state._updated?.Clear();
+                state._tracked?.Clear();
+                state._deleted?.Clear();
+                state._maps?.Clear();
+            }
+
+            _commands?.Clear();
+            _commands = null;
+
+            if (_transaction != null)
+            {
+                await _transaction.DisposeAsync();
+                _transaction = null;
+            }
+        }
+
         private async Task ReleaseConnectionAsync()
         {
-            ReleaseTransaction();
+            await ReleaseTransactionAsync();
 
             if (_connection != null)
             {
@@ -1024,37 +985,40 @@ namespace YesSql
         }
 
 #else
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
-            // Do nothing if Dispose() was already called
-            if (_disposed)
-            {
-                return;
-            }
+            Dispose();
 
-            try
-            {
-                if (!_cancel && HasWork())
-                {
-                    // This should never go there, CommitAsync() should be called explicitely
-                    // and asynchronously before Dispose() is invoked
-                    await FlushAsync();
-                }
-            }
-            finally
-            {
-                _disposed = true;
-
-                CommitTransaction();
-
-                ReleaseSession();
-
-                GC.SuppressFinalize(this);
-
-                _suppressedFinalize = true;
-            }
+            return default;
         }
 #endif
+
+        /// <summary>
+        /// Clears all the resources associated to the transaction.
+        /// </summary>
+        private void ReleaseTransaction()
+        {
+            foreach (var state in _collectionStates.Values)
+            {
+                // IndentityMap is cleared in ReleaseSession()
+                state._concurrent?.Clear();
+                state._saved?.Clear();
+                state._updated?.Clear();
+                state._tracked?.Clear();
+                state._deleted?.Clear();
+                state._maps?.Clear();
+            }
+
+            _commands?.Clear();
+            _commands = null;
+
+            if (_transaction != null)
+            {
+                _transaction.Dispose();
+                _transaction = null;
+            }
+        }
+
         private void ReleaseConnection()
         {
             ReleaseTransaction();
@@ -1072,7 +1036,7 @@ namespace YesSql
         /// </summary>
         internal bool HasWork()
         {
-            foreach (var state in CollectionStates.Values)
+            foreach (var state in _collectionStates.Values)
             {
                 if (
                     state.Saved.Count +
@@ -1087,7 +1051,7 @@ namespace YesSql
 
         private async Task ReduceAsync()
         {
-            foreach (var collectionState in CollectionStates)
+            foreach (var collectionState in _collectionStates)
             {
                 var state = collectionState.Value;
                 var collection = collectionState.Key;
@@ -1197,6 +1161,8 @@ namespace YesSql
                         var deletedDocumentIds = deletedMapsGroup.SelectMany(x => x.GetRemovedDocuments().Select(d => d.Id)).ToArray();
                         var addedDocumentIds = newMapsGroup.SelectMany(x => x.GetAddedDocuments().Select(d => d.Id)).ToArray();
 
+                        _commands ??= new List<IIndexCommand>();
+
                         if (dbIndex != null)
                         {
                             if (index == null)
@@ -1230,7 +1196,7 @@ namespace YesSql
 
         private async Task<ReduceIndex> ReduceForAsync(IndexDescriptor descriptor, object currentKey, string collection)
         {
-            await DemandAsync();
+            await CreateConnectionAsync();
 
             var name = _tablePrefix + _store.Configuration.TableNameConvention.GetIndexTable(descriptor.IndexType, collection);
             var sql = "select * from " + _dialect.QuoteForTableName(name) + " where " + _dialect.QuoteForColumnName(descriptor.GroupKey.Name) + " = @currentKey";
@@ -1271,7 +1237,12 @@ namespace YesSql
         /// </summary>
         private IEnumerable<IndexDescriptor> GetDescriptors(Type t, string collection)
         {
-            var cacheKey = t.FullName + ":" + collection;
+            _descriptors ??= new Dictionary<string, IEnumerable<IndexDescriptor>>();
+
+            var cacheKey = String.IsNullOrEmpty(collection) 
+                ? t.FullName
+                : String.Concat(t.FullName + ":" + collection)
+                ;
 
             if (!_descriptors.TryGetValue(cacheKey, out var typedDescriptors))
             {
@@ -1312,6 +1283,8 @@ namespace YesSql
                         {
                             continue;
                         }
+
+                        _commands ??= new List<IIndexCommand>();
 
                         index.AddDocument(document);
 
@@ -1360,6 +1333,8 @@ namespace YesSql
                     continue;
                 }
 
+                _commands ??= new List<IIndexCommand>();
+
                 // If the mapped elements are not meant to be reduced, delete
                 if (descriptor.Reduce == null || descriptor.Delete == null)
                 {
@@ -1390,7 +1365,7 @@ namespace YesSql
         /// <summary>
         /// Initializes a new connection if none has been yet. Use this method when reads need to be done.
         /// </summary>
-        public async Task<DbConnection> DemandAsync()
+        public async Task<DbConnection> CreateConnectionAsync()
         {
             CheckDisposed();
 
@@ -1406,23 +1381,28 @@ namespace YesSql
 
         public DbTransaction CurrentTransaction => _transaction;
 
+        public Task<DbTransaction> BeginTransactionAsync()
+        {
+            return BeginTransactionAsync(Store.Configuration.IsolationLevel);
+        }
+
         /// <summary>
         /// Begins a new transaction if none has been yet. Use this method when writes need to be done.
         /// </summary>
-        public async Task<DbTransaction> BeginTransactionAsync()
+        public async Task<DbTransaction> BeginTransactionAsync(IsolationLevel isolationLevel)
         {
             CheckDisposed();
 
             if (_transaction == null)
             {
-                await DemandAsync();
+                await CreateConnectionAsync();
 
                 // In the case of shared connections (InMemory) this can throw as the transation
                 // might already be set by a concurrent thread on the same shared connection.
 #if SUPPORTS_ASYNC_TRANSACTIONS
-                _transaction = await _connection.BeginTransactionAsync(_isolationLevel);
+                _transaction = await _connection.BeginTransactionAsync(isolationLevel);
 #else
-                _transaction = _connection.BeginTransaction(_isolationLevel);
+                _transaction = _connection.BeginTransaction(isolationLevel);
 #endif
 
             }
@@ -1430,13 +1410,18 @@ namespace YesSql
             return _transaction;
         }
 
-        public void Cancel()
+        public Task CancelAsync()
         {
             CheckDisposed();
 
             _cancel = true;
 
+#if SUPPORTS_ASYNC_TRANSACTIONS
+            return ReleaseTransactionAsync();
+#else
             ReleaseTransaction();
+            return Task.CompletedTask;
+#endif
         }
 
         public IStore Store => _store;

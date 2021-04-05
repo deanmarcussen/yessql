@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Data.Common;
 using System.Linq;
 using System.Threading.Tasks;
@@ -74,13 +75,13 @@ namespace YesSql
         /// <summary>
         /// Cancels any pending commands.
         /// </summary>
-        void Cancel();
+        Task CancelAsync();
 
         /// <summary>
         /// Flushes pending commands to the database.
         /// </summary>
         /// <remarks>
-        /// This doesn't commit or dispose of the transaction. A call to <see cref="CommitAsync"/>
+        /// This doesn't commit or dispose of the transaction. A call to <see cref="SaveChangesAsync"/>
         /// is still necessary for the changes to be visible from other transactions.
         /// </remarks>
         Task FlushAsync();
@@ -89,21 +90,26 @@ namespace YesSql
         /// Flushes any changes, commits the transaction, and disposes it.
         /// </summary>
         /// <remarks>
-        /// Sessions are automatically committed when disposed, however calling <see cref="CommitAsync"/>
+        /// Sessions are automatically committed when disposed, however calling <see cref="SaveChangesAsync"/>
         /// is recommended before the session is disposed to prevent it from being called on a non-async
         /// code path.
         /// </remarks>
-        Task CommitAsync();
+        Task SaveChangesAsync();
 
         /// <summary>
-        /// Returns the <see cref="DbConnection"/> that is used by this instance.
+        /// Creates or returns a <see cref="DbConnection"/>.
         /// </summary>
-        Task<DbConnection> DemandAsync();
+        Task<DbConnection> CreateConnectionAsync();
 
         /// <summary>
-        /// Begin the <see cref="DbConnection"/> that is used by this instance.
+        /// Creates or returns an existing <see cref="DbTransaction"/> with the default isolation level.
         /// </summary>
         Task<DbTransaction> BeginTransactionAsync();
+
+        /// <summary>
+        /// Creates or returns an existing <see cref="DbTransaction"/> with the specified isolation level.
+        /// </summary>
+        Task<DbTransaction> BeginTransactionAsync(IsolationLevel isolationLevel);
 
         /// <summary>
         /// Returns the current <see cref="DbTransaction"/> if it exists.

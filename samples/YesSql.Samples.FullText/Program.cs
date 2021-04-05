@@ -57,6 +57,8 @@ namespace YesSql.Samples.FullText
                 session.Save(new Article { Content = "This is a yellow cat" });
                 session.Save(new Article { Content = "This is a pink elephant" });
                 session.Save(new Article { Content = "This is a green tiger" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = store.CreateSession())

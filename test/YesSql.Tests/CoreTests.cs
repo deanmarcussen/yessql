@@ -1,58 +1,73 @@
 using Dapper;
-using Parlot;
-using Parlot.Fluent;
 using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics;
 using System.Linq;
-using System.Linq.Expressions;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
 using YesSql.Commands;
-using YesSql.Core.QueryParser;
 using YesSql.Indexes;
-using YesSql.Search;
 using YesSql.Services;
 using YesSql.Sql;
 using YesSql.Tests.Commands;
 using YesSql.Tests.CompiledQueries;
 using YesSql.Tests.Indexes;
 using YesSql.Tests.Models;
-using YesSql.Tests.Search;
-using static YesSql.Core.QueryParser.Fluent.QueryParsers;
 
 namespace YesSql.Tests
 {
-    public abstract class CoreTests : IDisposable
+    public abstract class CoreTests : IAsyncLifetime
     {
         protected virtual string TablePrefix => "tp";
 
         protected virtual string DecimalColumnDefinitionFormatString => "DECIMAL({0},{1})";
 
         protected IStore _store;
+        protected static IConfiguration _configuration;
 
         protected ITestOutputHelper _output;
+        protected abstract IConfiguration CreateConfiguration();
+
 
         public CoreTests(ITestOutputHelper output)
         {
             _output = output;
-
-            var configuration = CreateConfiguration();
-
-            CleanDatabase(configuration, false);
-            CreateTables(configuration);
         }
 
-        public void Dispose()
+        public async Task InitializeAsync()
         {
-            _store.Dispose();
+            // Create the tables only once
+            if (_configuration == null)
+            {
+                _configuration = CreateConfiguration();
+
+                CleanDatabase(_configuration, false);
+
+                _store = await StoreFactory.CreateAndInitializeAsync(_configuration);
+                await _store.InitializeCollectionAsync("Col1");
+                _store.TypeNames[typeof(Person)] = "People";
+
+                CreateTables(_configuration);
+            }
+            else
+            {
+                _store = await StoreFactory.CreateAndInitializeAsync(_configuration);
+                await _store.InitializeCollectionAsync("Col1");
+                _store.TypeNames[typeof(Person)] = "People";
+            }
+
+            // Clear the tables for each new test
+            ClearTables(_configuration);
         }
 
-        protected abstract IConfiguration CreateConfiguration();
+        public Task DisposeAsync()
+        {
+            return Task.CompletedTask;
+        }
 
         //[DebuggerNonUserCode]
         protected virtual void CleanDatabase(IConfiguration configuration, bool throwOnError)
@@ -87,7 +102,6 @@ namespace YesSql.Tests
                     builder.DropMapIndexTable<PersonByName>("Col1");
                     builder.DropMapIndexTable<PersonByNameCol>("Col1");
                     builder.DropMapIndexTable<PersonByBothNamesCol>("Col1");
-                    builder.DropMapIndexTable<PersonByBothNamesCol>("Col1");
                     builder.DropReduceIndexTable<PersonsByNameCol>("Col1");
 
                     builder.DropTable(configuration.TableNameConvention.GetDocumentTable("Col1"));
@@ -102,24 +116,105 @@ namespace YesSql.Tests
             }
         }
 
+        protected virtual void ClearTables(IConfiguration configuration)
+        {
+            void DeleteReduceIndexTable<IndexType>(DbConnection connection, string collection = "")
+            {
+                var indexTable = configuration.TableNameConvention.GetIndexTable(typeof(IndexType), collection);
+                var documentTable = configuration.TableNameConvention.GetDocumentTable(collection);
+
+                var bridgeTableName = indexTable + "_" + documentTable;
+
+                try
+                {
+                    connection.Execute($"DELETE FROM {configuration.SqlDialect.QuoteForTableName(TablePrefix + bridgeTableName)}");
+                    connection.Execute($"DELETE FROM {configuration.SqlDialect.QuoteForTableName(TablePrefix + indexTable)}");
+                }
+                catch 
+                { 
+                }
+            }
+
+            void DeleteMapIndexTable<IndexType>(DbConnection connection, string collection = "")
+            {
+                var indexName = typeof(IndexType).Name;
+                var indexTable = configuration.TableNameConvention.GetIndexTable(typeof(IndexType), collection);
+
+                try 
+                { 
+                    connection.Execute($"DELETE FROM {configuration.SqlDialect.QuoteForTableName(TablePrefix + indexTable)}");
+                }
+                catch { }
+            }
+
+            void DeleteDocumentTable(DbConnection connection, string collection = "")
+            {
+                var tableName = configuration.TableNameConvention.GetDocumentTable(collection);
+
+                try
+                { 
+                    connection.Execute($"DELETE FROM {configuration.SqlDialect.QuoteForTableName(TablePrefix + tableName)}");
+                }
+                catch { }
+            }
+
+            // Remove existing tables
+            using (var connection = configuration.ConnectionFactory.CreateConnection())
+            {
+                connection.Open();
+
+                DeleteReduceIndexTable<ArticlesByDay>(connection);
+                DeleteReduceIndexTable<AttachmentByDay>(connection);
+                DeleteMapIndexTable<ArticleByPublishedDate>(connection);
+                DeleteMapIndexTable<PersonByName>(connection);
+                DeleteMapIndexTable<CarIndex>(connection);
+                DeleteMapIndexTable<PersonByNameCol>(connection);
+                DeleteMapIndexTable<PersonIdentity>(connection);
+                DeleteMapIndexTable<EmailByAttachment>(connection);
+                DeleteMapIndexTable<TypesIndex>(connection);
+
+                DeleteMapIndexTable<ShapeIndex>(connection);
+                DeleteMapIndexTable<PersonByAge>(connection);
+                DeleteMapIndexTable<PersonByNullableAge>(connection);
+                DeleteMapIndexTable<Binary>(connection);
+                DeleteMapIndexTable<PublishedArticle>(connection);
+                DeleteMapIndexTable<PropertyIndex>(connection);
+                DeleteReduceIndexTable<UserByRoleNameIndex>(connection);
+
+                DeleteMapIndexTable<PersonByName>(connection, "Col1");
+                DeleteMapIndexTable<PersonByNameCol>(connection, "Col1");
+                DeleteMapIndexTable<PersonByBothNamesCol>(connection, "Col1");
+                DeleteReduceIndexTable<PersonsByNameCol>(connection, "Col1");
+
+                DeleteDocumentTable(connection, "Col1");
+                DeleteDocumentTable(connection, "");
+
+                //connection.Execute($"DELETE FROM {TablePrefix}{DbBlockIdGenerator.TableName}");
+
+                OnClearTables(connection);
+
+            }
+        }
+
         protected virtual void OnCleanDatabase(SchemaBuilder builder, DbTransaction transaction)
+        {
+
+        }
+
+        protected virtual void OnClearTables(DbConnection connection)
         {
 
         }
 
         public void CreateTables(IConfiguration configuration)
         {
-            _store = StoreFactory.CreateAndInitializeAsync(configuration).GetAwaiter().GetResult();
-
-            _store.InitializeCollectionAsync("Col1").GetAwaiter().GetResult();
-
-            using (var connection = _store.Configuration.ConnectionFactory.CreateConnection())
+            using (var connection = configuration.ConnectionFactory.CreateConnection())
             {
                 connection.Open();
 
-                using (var transaction = connection.BeginTransaction(_store.Configuration.IsolationLevel))
+                using (var transaction = connection.BeginTransaction(configuration.IsolationLevel))
                 {
-                    var builder = new SchemaBuilder(_store.Configuration, transaction);
+                    var builder = new SchemaBuilder(configuration, transaction);
 
                     builder.CreateReduceIndexTable<ArticlesByDay>(column => column
                             .Column<int>(nameof(ArticlesByDay.Count))
@@ -222,9 +317,9 @@ namespace YesSql.Tests
                             //.Column<sbyte?>(nameof(TypesIndex.NullableSByte), c => c.Nullable())
                             .Column<short?>(nameof(TypesIndex.NullableShort), c => c.Nullable())
                             .Column<TimeSpan?>(nameof(TypesIndex.NullableTimeSpan), c => c.Nullable())
-                        //.Column<uint?>(nameof(TypesIndex.NullableUInt), c => c.Nullable())
-                        //.Column<ulong?>(nameof(TypesIndex.NullableULong), c => c.Nullable())
-                        //.Column<ushort?>(nameof(TypesIndex.NullableUShort), c => c.Nullable())
+                            //.Column<uint?>(nameof(TypesIndex.NullableUInt), c => c.Nullable())
+                            //.Column<ulong?>(nameof(TypesIndex.NullableULong), c => c.Nullable())
+                            //.Column<ushort?>(nameof(TypesIndex.NullableUShort), c => c.Nullable())
                         );
 
                     builder.CreateMapIndexTable<PersonByName>(column => column
@@ -247,13 +342,11 @@ namespace YesSql.Tests
                             .Column<string>(nameof(PersonsByNameCol.Name))
                             .Column<int>(nameof(PersonsByNameCol.Count)),
                             "Col1"
-                            );                            
+                            );                                                        
 
                     transaction.Commit();
                 }
             }
-
-            _store.TypeNames[typeof(Person)] = "People";
         }
 
         [Fact]
@@ -267,7 +360,29 @@ namespace YesSql.Tests
         }
 
         [Fact]
-        public void ShouldSaveCustomObject()
+        public async Task ShouldSaveCustomObject()
+        {
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates"
+                };
+
+                session.Save(bill);
+
+                await session.SaveChangesAsync();
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                Assert.Equal(1, await session.Query<Person>().CountAsync());
+            }
+        }
+
+        [Fact]
+        public async Task NotCallingCommitShouldCancelTransaction()
         {
             using (var session = _store.CreateSession())
             {
@@ -279,10 +394,45 @@ namespace YesSql.Tests
 
                 session.Save(bill);
             }
+
+            using (var session = _store.CreateSession())
+            {
+                Assert.Equal(0, await session.Query<Person>().CountAsync());
+            }
         }
 
         [Fact]
-        public void ShouldSaveSeveralObjects()
+        public async Task ShouldCancelTransactionAfterFlush()
+        {
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates"
+                };
+
+                session.Save(bill);
+
+                await session.FlushAsync();
+
+                var steve = new Person
+                {
+                    Firstname = "Steve",
+                    Lastname = "Balmer"
+                };
+
+                session.Save(steve);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                Assert.Equal(0, await session.Query<Person>().CountAsync());
+            }
+        }
+
+        [Fact]
+        public async Task ShouldSaveSeveralObjects()
         {
             using (var session = _store.CreateSession())
             {
@@ -300,11 +450,18 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(steve);
+
+                await session.SaveChangesAsync();
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                Assert.Equal(2, await session.Query<Person>().CountAsync());
             }
         }
 
         [Fact]
-        public void ShouldSaveAnonymousObject()
+        public async Task ShouldSaveAnonymousObject()
         {
             using (var session = _store.CreateSession())
             {
@@ -322,6 +479,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(steve);
+
+                await session.SaveChangesAsync();
             }
         }
 
@@ -342,6 +501,7 @@ namespace YesSql.Tests
                 };
 
                 session.Save(bill);
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -381,6 +541,7 @@ namespace YesSql.Tests
                 bill.Lastname = "Gates";
 
                 session.Save(bill);
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -402,6 +563,7 @@ namespace YesSql.Tests
             {
                 var bill = new Person { Firstname = "Bill" };
                 session.Save(bill);
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -422,6 +584,8 @@ namespace YesSql.Tests
             {
                 session.Save(new Car { Name = "Truck", Category = Categories.Truck });
                 session.Save(new Car { Name = "Van", Category = Categories.Van });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -444,6 +608,8 @@ namespace YesSql.Tests
                 session.Save(new Person { Firstname = "Alex" });
                 session.Save(new Person { Firstname = "Bill" });
                 session.Save(new Person { Firstname = "assan" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -461,6 +627,8 @@ namespace YesSql.Tests
             {
                 var bill = new Person { Firstname = "Bill" };
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -481,6 +649,8 @@ namespace YesSql.Tests
                 session.RegisterIndexes(new ScopedPersonAsyncIndexProvider(1));
 
                 session.Save(new Person { Firstname = "Bill" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -489,6 +659,8 @@ namespace YesSql.Tests
 
                 session.Save(new Person { Firstname = "Bill" });
                 session.Save(new Person { Firstname = "Steve" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -515,6 +687,8 @@ namespace YesSql.Tests
                 session.Save(new Person { Firstname = null });
                 session.Save(new Person { Firstname = "a" });
                 session.Save(new Person { Firstname = "b" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -544,6 +718,8 @@ namespace YesSql.Tests
                 session.Save(new Person { Firstname = null });
                 session.Save(new Person { Firstname = "a" });
                 session.Save(new Person { Firstname = "b" });
+
+                await session.SaveChangesAsync();
             }
 
             string nullVariable = null;
@@ -560,7 +736,7 @@ namespace YesSql.Tests
         [Fact]
         public async Task ShouldCompareWithConstants()
         {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
+            _store.RegisterIndexes<ArticleBydPublishedDateProvider>();
 
             using (var session = _store.CreateSession())
             {
@@ -568,6 +744,8 @@ namespace YesSql.Tests
                 session.Save(new Article { Title = TestConstants.Strings.SomeOtherString, PublishedUtc = new DateTime(2011, 11, 1) });
                 session.Save(new Article { Title = TestConstants.Strings.SomeString, PublishedUtc = new DateTime(2011, 11, 2) });
                 session.Save(new Article { Title = TestConstants.Strings.SomeOtherString, PublishedUtc = new DateTime(2011, 11, 2) });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -588,6 +766,8 @@ namespace YesSql.Tests
             {
                 var bill = new Person { Firstname = "Bill" };
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -610,11 +790,13 @@ namespace YesSql.Tests
                 var steve = new Person { Firstname = "Steve" };
                 session.Save(bill);
                 session.Save(steve);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
             {
-                var connection = await session.DemandAsync();
+                var connection = await session.CreateConnectionAsync();
                 var dialect = _store.Configuration.SqlDialect;
                 var sql = dialect.QuoteForColumnName(nameof(PersonByName.SomeName)) + " = " + dialect.GetSqlValue("Bill");
 
@@ -654,6 +836,8 @@ namespace YesSql.Tests
                             },
                         }
                 });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -665,7 +849,7 @@ namespace YesSql.Tests
         }
 
         [Fact]
-        public void ShouldAssignIdWhenSaved()
+        public async Task ShouldAssignIdWhenSaved()
         {
             using (var session = _store.CreateSession())
             {
@@ -678,6 +862,8 @@ namespace YesSql.Tests
                 Assert.True(bill.Id == 0);
                 session.Save(bill);
                 Assert.True(bill.Id != 0);
+
+                await session.SaveChangesAsync();
             }
         }
 
@@ -696,6 +882,8 @@ namespace YesSql.Tests
                 var newBill = await session.GetAsync<Person>(bill.Id);
 
                 Assert.Same(newBill, bill);
+
+                await session.SaveChangesAsync();
             }
         }
 
@@ -714,6 +902,31 @@ namespace YesSql.Tests
                 var newBill = await session.GetAsync<Person>(bill.Id);
 
                 Assert.Same(newBill, bill);
+
+                await session.SaveChangesAsync();
+            }
+        }
+
+        [Fact]
+        public async Task NoSavingChangesShouldRollbackAutoFlush()
+        {
+            using (var session = _store.CreateSession())
+            {
+                var bill = new Person
+                {
+                    Firstname = "Bill",
+                    Lastname = "Gates"
+                };
+
+                session.Save(bill);
+                var newBill = await session.GetAsync<Person>(bill.Id);
+
+                Assert.Same(newBill, bill);
+            }
+
+            using (var session = _store.CreateSession())
+            {
+                Assert.Equal(0, await session.Query<Person>().CountAsync());
             }
         }
 
@@ -733,12 +946,11 @@ namespace YesSql.Tests
 
                 Assert.Equal(bill, newBill);
 
-                await session.CommitAsync();
+                await session.SaveChangesAsync();
 
                 newBill = await session.GetAsync<Person>(bill.Id);
 
                 Assert.Equal(bill, newBill);
-
             }
         }
 
@@ -773,6 +985,8 @@ namespace YesSql.Tests
                 session.Save(bill);
 
                 Assert.Equal(1, await session.QueryIndex<PersonByName>().CountAsync());
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -805,6 +1019,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(elon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -868,6 +1084,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 session.Save(elon);
                 session.Save(eilon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -912,6 +1130,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(elon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -947,6 +1167,8 @@ namespace YesSql.Tests
                         Age = i
                     });
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -978,6 +1200,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(steve);
+
+                await session.SaveChangesAsync();
             }
 
             var concurrency = 20;
@@ -1037,6 +1261,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 session.Save(elon);
                 session.Save(eilon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1077,6 +1303,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 session.Save(elon);
                 session.Save(eilon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1116,6 +1344,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(elon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1152,6 +1382,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(elon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1185,6 +1417,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(elon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1218,6 +1452,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(elon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1257,6 +1493,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(elon);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1289,22 +1527,23 @@ namespace YesSql.Tests
 
                 var p1 = await session.QueryIndex<PersonByName>().FirstOrDefaultAsync();
 
-                Assert.Equal(1, p1.Id);
+                var firstId = p1.Id;
 
                 bill.Firstname = "Bill2";
                 session.Save(bill);
 
                 var p2 = await session.QueryIndex<PersonByName>().FirstOrDefaultAsync();
 
-                Assert.Equal(2, p2.Id);
+                Assert.Equal(firstId + 1, p2.Id);
 
                 bill.Firstname = "Bill3";
                 session.Save(bill);
 
                 var p3 = await session.QueryIndex<PersonByName>().FirstOrDefaultAsync();
 
-                Assert.Equal(3, p3.Id);
+                Assert.Equal(firstId + 2, p3.Id);
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1324,7 +1563,7 @@ namespace YesSql.Tests
 
             _store.RegisterIndexes<PersonIdentitiesIndexProvider>();
 
-            using (var session = _store.CreateSession())
+            await using (var session = _store.CreateSession())
             {
                 var hanselman = new Person
                 {
@@ -1340,9 +1579,11 @@ namespace YesSql.Tests
 
                 session.Save(hanselman);
                 session.Save(guthrie);
+
+                await session.SaveChangesAsync();
             }
 
-            using (var session = _store.CreateSession())
+            await using (var session = _store.CreateSession())
             {
                 Assert.Equal(4, await session.QueryIndex<PersonIdentity>().CountAsync());
                 Assert.Equal(1, await session.QueryIndex<PersonIdentity>().Where(x => x.Identity == "Hanselman").CountAsync());
@@ -1375,6 +1616,8 @@ namespace YesSql.Tests
 
                 session.Save(hanselman);
                 session.Save(guthrie);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1418,6 +1661,8 @@ namespace YesSql.Tests
                 session.Save(hanselman);
                 session.Save(guthrie);
                 session.Save(mads);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1465,6 +1710,8 @@ namespace YesSql.Tests
                 session.Save(hanselman);
                 session.Save(guthrie);
                 session.Save(mads);
+                await session.SaveChangesAsync();
+
             }
 
             using (var session = _store.CreateSession())
@@ -1500,6 +1747,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(guthrie);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1513,6 +1762,8 @@ namespace YesSql.Tests
                 guthrie.Lastname = "Gu";
 
                 session.Save(guthrie);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1530,6 +1781,8 @@ namespace YesSql.Tests
                 session.Save(guthrie);
 
                 Assert.Equal(0, await session.QueryIndex<PersonIdentity>().CountAsync());
+
+                await session.SaveChangesAsync();
             }
         }
 
@@ -1554,6 +1807,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(steve);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1602,6 +1857,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 session.Save(steve);
                 session.Save(paul);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1626,6 +1883,8 @@ namespace YesSql.Tests
                 session.Save(new Person { Firstname = "Bill" });
                 session.Save(new Person { Firstname = "Steve" });
                 session.Save(new Person { Firstname = "Paul" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1666,6 +1925,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 session.Save(steve);
                 session.Save(paul);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1724,6 +1985,7 @@ namespace YesSql.Tests
                     session.Save(article);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1756,6 +2018,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1795,6 +2059,8 @@ namespace YesSql.Tests
             {
                 var email = new Email() { Date = new DateTime(2018, 06, 11), Attachments = new System.Collections.Generic.List<Attachment>() { new Attachment("A1"), new Attachment("A2"), new Attachment("A3") } };
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1825,6 +2091,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1844,6 +2112,8 @@ namespace YesSql.Tests
                 email.Attachments.Add(new Attachment("A5"));
 
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             // Actual email should be updated, and there should still be a single AttachmentByDay
@@ -1896,6 +2166,7 @@ namespace YesSql.Tests
                     session.Save(article);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1944,11 +2215,15 @@ namespace YesSql.Tests
                 {
                     session.Save(article);
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
             {
                 session.Save(new Article { PublishedUtc = new DateTime(2011, 11, 1) });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1979,6 +2254,8 @@ namespace YesSql.Tests
                 {
                     PublishedUtc = new DateTime(2011, 11, 1)
                 });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -1987,6 +2264,8 @@ namespace YesSql.Tests
                 {
                     PublishedUtc = new DateTime(2011, 11, 1)
                 });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2009,6 +2288,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2017,6 +2298,8 @@ namespace YesSql.Tests
                 Assert.NotNull(person);
 
                 session.Delete(person);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2033,7 +2316,7 @@ namespace YesSql.Tests
 
             using (var session = _store.CreateSession())
             {
-                for (var i = 0; i < 2099; i++)
+                for (var i = 0; i < _configuration.CommandsPageSize + 50; i++)
                 {
                     session.Save(new Person
                     {
@@ -2041,6 +2324,8 @@ namespace YesSql.Tests
                         Lastname = "Gates"
                     });
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2051,6 +2336,8 @@ namespace YesSql.Tests
                 {
                     session.Delete(person);
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2074,6 +2361,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2085,6 +2374,8 @@ namespace YesSql.Tests
                 Assert.NotNull(person);
 
                 session.Delete(person);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2125,6 +2416,7 @@ namespace YesSql.Tests
                     session.Save(article);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2139,6 +2431,8 @@ namespace YesSql.Tests
                 var article = await session.Query<Article, ArticlesByDay>().Where(b => b.DayOfYear == new DateTime(2011, 11, 4).DayOfYear).FirstOrDefaultAsync();
                 Assert.NotNull(article);
                 session.Delete(article);
+
+                await session.SaveChangesAsync();
             }
 
             // there should be only 3 indexes left
@@ -2180,6 +2474,7 @@ namespace YesSql.Tests
                     session.Save(new Article { PublishedUtc = date });
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2204,7 +2499,8 @@ namespace YesSql.Tests
                 article.PublishedUtc = new DateTime(2011, 11, 3);
 
                 session.Save(article);
-
+                
+                await session.SaveChangesAsync();
             }
 
             // there should be the same number of indexes
@@ -2244,6 +2540,7 @@ namespace YesSql.Tests
                     session.Save(article);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2264,6 +2561,8 @@ namespace YesSql.Tests
 
                 Assert.NotNull(article);
                 session.Delete(article);
+
+                await session.SaveChangesAsync();
             }
 
             // Ensure the document and its index have been deleted
@@ -2289,6 +2588,8 @@ namespace YesSql.Tests
 
                 session.Save(d1);
                 session.Save(d2);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2355,6 +2656,8 @@ namespace YesSql.Tests
                 var articles = await session.Query<Article, ArticlesByDay>(x => x.DayOfYear == 305).ListAsync();
 
                 d1.PublishedUtc = new DateTime(2011, 11, 2);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2383,6 +2686,7 @@ namespace YesSql.Tests
                     session.Save(person);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2411,6 +2715,8 @@ namespace YesSql.Tests
 
                     session.Save(person);
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2452,6 +2758,8 @@ namespace YesSql.Tests
 
                     session.Save(person);
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2520,6 +2828,8 @@ namespace YesSql.Tests
 
                     session.Save(person);
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2562,6 +2872,7 @@ namespace YesSql.Tests
                     session.Save(person);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2589,6 +2900,7 @@ namespace YesSql.Tests
                     session.Save(person);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -2601,753 +2913,39 @@ namespace YesSql.Tests
             }
         }
 
-        [Fact]
-        public async Task ShouldParseNamedTermQuery()
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var billsArticle = new Article
-                {
-                    Title = "Article by bill about rabbits"
-                };
-
-                var stevesArticle = new Article
-                {
-                    Title = "Post by steve about cats"
-                };
-
-                session.Save(billsArticle);
-                session.Save(stevesArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var search = "title:steve";
-
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        OneConditionParser<Article>((val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-
-                await parsed.ExecuteQueryAsync(searchQuery, null);
-
-                // Normal yesql query
-                Assert.Equal("Post by steve about cats", (await session.Query().For<Article>().With<ArticleByPublishedDate>(x => x.Title.Contains("Steve")).FirstOrDefaultAsync()).Title);
-                Assert.Equal(1, await session.Query().For<Article>().With<ArticleByPublishedDate>(x => x.Title.Contains("Steve")).CountAsync());
-
-                // Built query.
-                Assert.Equal("Post by steve about cats", (await searchQuery.FirstOrDefaultAsync()).Title);
-                Assert.Equal(1, await searchQuery.CountAsync());
-            }
-        }  
-
-        // Duplicate of above.
-        [Fact]
-        public async Task ShouldParseAsyncNamedTermQuery()
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var billsArticle = new Article
-                {
-                    Title = "Article by bill about rabbits"
-                };
-
-                var stevesArticle = new Article
-                {
-                    Title = "Post by steve about cats"
-                };
-
-                session.Save(billsArticle);
-                session.Save(stevesArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var search = "title:steve";
-
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        OneConditionParser<Article>(async (val, query, ctx) => 
-                        {
-                            await Task.Delay(1);
-                            // return Task.FromResult<IQuery<Article>>(query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)));
-                            return query.With<ArticleByPublishedDate>(x => x.Title.Contains(val));
-                        })
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-
-                await parsed.ExecuteQueryAsync(searchQuery, null);
-
-                // Normal yesql query
-                Assert.Equal("Post by steve about cats", (await session.Query().For<Article>().With<ArticleByPublishedDate>(x => x.Title.Contains("Steve")).FirstOrDefaultAsync()).Title);
-                Assert.Equal(1, await session.Query().For<Article>().With<ArticleByPublishedDate>(x => x.Title.Contains("Steve")).CountAsync());
-
-                // Built query.
-                Assert.Equal("Post by steve about cats", (await searchQuery.FirstOrDefaultAsync()).Title);
-                Assert.Equal(1, await searchQuery.CountAsync());
-            }
-        }  
-
-        [Theory]
-        [InlineData("steve")]
-        [InlineData("title:steve")]
-        public async Task ShouldParseDefaultTermQuery(string search)
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var billsArticle = new Article
-                {
-                    Title = "Article by bill about rabbits"
-                };
-
-                var stevesArticle = new Article
-                {
-                    Title = "Post by steve about cats"
-                };
-
-                session.Save(billsArticle);
-                session.Save(stevesArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    DefaultTermParser("title",
-                        OneConditionParser<Article>((val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)))
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-
-                await parsed.ExecuteQueryAsync(searchQuery, null);
-
-                // Normal yesql query
-                Assert.Equal("Post by steve about cats", (await session.Query().For<Article>().With<ArticleByPublishedDate>(x => x.Title.Contains("Steve")).FirstOrDefaultAsync()).Title);
-                Assert.Equal(1, await session.Query().For<Article>().With<ArticleByPublishedDate>(x => x.Title.Contains("Steve")).CountAsync());
-
-                // Built query.
-                Assert.Equal("Post by steve about cats", (await searchQuery.FirstOrDefaultAsync()).Title);
-                Assert.Equal(1, await searchQuery.CountAsync());
-            }
-        }          
-
-        
-        [Fact]
-        public async Task ShouldParseOrQuery()
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var billsArticle = new Article
-                {
-                    Title = "Article by bill about rabbits"
-                };
-
-                var stevesArticle = new Article
-                {
-                    Title = "Post by steve about cats"
-                };
-
-                session.Save(billsArticle);
-                session.Save(stevesArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                // boolean OR "title:(bill OR post)"
-                var search = "title:bill post";
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        ManyConditionParser<Article>(
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))
-                        )
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-                await parsed.ExecuteQueryAsync(searchQuery, null);
-
-                var yesqlQuery = session.Query().For<Article>()
-                    .Any(
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("bill")),
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("post"))
-                    );
-
-                // Normal yesql query
-                Assert.Equal(2, await yesqlQuery.CountAsync());
-
-                // Built query.
-                Assert.Equal(2, await searchQuery.CountAsync());
-            }
-        } 
 
         [Fact]
-        public async Task ShouldParseAndQuery()
+        public async Task ShouldQueryByMappedIndex()
         {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
+            _store.RegisterIndexes<PersonIndexProvider>();
 
             using (var session = _store.CreateSession())
             {
-                var billsArticle = new Article
+                var bill = new Person
                 {
-                    Title = "Article by bill about rabbits"
+                    Firstname = "Bill",
+                    Lastname = "Gates",
                 };
 
-                var stevesArticle = new Article
+                var steve = new Person
                 {
-                    Title = "Post by steve about cats"
-                };  
-
-                session.Save(billsArticle);
-                session.Save(stevesArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                // boolean AND "title:(bill AND rabbits)"
-                var search = "title:bill AND rabbits";
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        ManyConditionParser<Article>(
-                            (val ,query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val))) 
-                        )
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-
-                await parsed.ExecuteQueryAsync(searchQuery, null);
-
-                var yesqlQuery = session.Query().For<Article>()
-                    .All(
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("bill")),
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("rabbits"))
-                    );
-
-                // Normal yesql query
-                Assert.Equal(1, await yesqlQuery.CountAsync());
-
-                // Built query.
-                Assert.Equal(1, await searchQuery.CountAsync());
-            }
-        }  
-
-        [Fact]
-        public async Task ShouldParseComplexQuery()
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var beachLizardsArticle = new Article
-                {
-                    Title = "On the beach in the sand we found lizards"
+                    Firstname = "Steve",
+                    Lastname = "Balmer"
                 };
 
-                var mountainArticle = new Article
-                {
-                    Title = "On the mountain it snowed at the lake"
-                };                  
+                session.Save(bill);
+                session.Save(steve);
 
-                session.Save(beachLizardsArticle);
-                session.Save(mountainArticle);
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
             {
-                var search = "title:(beach AND sand) OR (mountain AND lake)";
-                var searchQuery = session.Query<Article>();
-   
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        ManyConditionParser<Article>(
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))  
-                        )
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-
-                await parsed.ExecuteQueryAsync(searchQuery, null);               
-
-                var yesqlQuery = session.Query().For<Article>()
-                // this top one is a combind node where left is Or and Right is And
-                    .Any(
-                        x => x.All(
-                            x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("beach")),
-                            x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("sand"))
-                        ),
-                        x => x.All(
-                            x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("mountain")),
-                            x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("lake"))
-                        )
-                    );
-
-                // Normal yesql query
-                Assert.Equal(2, await yesqlQuery.CountAsync());
-
-                // Built query.
-                Assert.Equal(2, await searchQuery.CountAsync());
+                Assert.Equal(2, await session.Query().For<Person>().With<PersonByName>().CountAsync());
+                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>(x => x.SomeName == "Steve").CountAsync());
+                Assert.Equal(1, await session.Query().For<Person>().With<PersonByName>().Where(x => x.SomeName == "Steve").CountAsync());
             }
-        }  
-
-        [Fact]
-        public async Task ShouldParseNotComplexQuery()
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var beachLizardsArticle = new Article
-                {
-                    Title = "On the beach in the sand we found lizards"
-                };
-
-                var sandcastlesArticle = new Article
-                {
-                    Title = "On the beach in the sand we built sandcastles"
-                }; 
-
-                var mountainArticle = new Article
-                {
-                    Title = "On the mountain it snowed at the lake"
-                };                  
-
-                session.Save(beachLizardsArticle);
-                session.Save(sandcastlesArticle);
-                session.Save(mountainArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                // boolean : ((beach AND sand) OR (mountain AND lake)) NOT lizards 
-                var search = "title:((beach AND sand) OR (mountain AND lake)) NOT lizards";
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        ManyConditionParser<Article>(
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))    
-                        )
-                    )
-
-                );
-
-                var parsed = parser.Parse(search);
-
-                await parsed.ExecuteQueryAsync(searchQuery, null);               
-
-                var yesqlQuery = session.Query().For<Article>()
-                // this top one is a combind node where left is Or and Right is And
-                    .Any(
-                        x => x.All(
-                            x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("beach")),
-                            x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("sand"))
-                        ),
-                        x => x.All(
-                            x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("mountain")),
-                            x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("lake"))
-                        )
-                    )
-                    .All(
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains("lizards")))
-                    );
-
-                // Normal yesql query
-                Assert.Equal(2, await yesqlQuery.CountAsync());
-
-                // Built query.
-                Assert.Equal(2, await searchQuery.CountAsync());
-            }
-        }  
-
-        [Fact]
-        public async Task ShouldParseNotBooleanQuery()
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var billsArticle = new Article
-                {
-                    Title = "Article by bill about rabbits"
-                };
-
-                var stevesArticle = new Article
-                {
-                    Title = "Post by steve about cats"
-                };
-
-                var paulsArticle = new Article
-                {
-                    Title = "Blog by paul about chickens"
-                };                
-
-                session.Save(billsArticle);
-                session.Save(stevesArticle);
-                session.Save(paulsArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var search = "title:NOT steve";          
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        ManyConditionParser<Article>(
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))    
-                        )
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-
-                await parsed.ExecuteQueryAsync(searchQuery, null);  
-
-                var yesqlQuery = session.Query().For<Article>()
-                    .All(
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains("steve")))
-                    )
-                    ;
-
-                // Normal yesql query
-                Assert.Equal(2, await yesqlQuery.CountAsync());
-
-                // Built query.
-                Assert.Equal(2, await searchQuery.CountAsync());
-            }
-        }   
-
-        [Fact]
-        public async Task ShouldParseAsyncNotBooleanQuery()
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var billsArticle = new Article
-                {
-                    Title = "Article by bill about rabbits"
-                };
-
-                var stevesArticle = new Article
-                {
-                    Title = "Post by steve about cats"
-                };
-
-                var paulsArticle = new Article
-                {
-                    Title = "Blog by paul about chickens"
-                };                
-
-                session.Save(billsArticle);
-                session.Save(stevesArticle);
-                session.Save(paulsArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var search = "title:NOT steve";          
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        ManyConditionParser<Article>(
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val)))    
-                        )
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-
-                // parsed.Build(searchQuery);  
-
-                searchQuery = await parsed.ExecuteQueryAsync(searchQuery, null);
-
-                var yesqlQuery = session.Query().For<Article>()
-                    .All(
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains("steve")))
-                    )
-                    ;
-
-                // Normal yesql query
-                Assert.Equal(2, await yesqlQuery.CountAsync());
-
-                // Built query.
-                Assert.Equal(2, await searchQuery.CountAsync());
-            }
-        }   
-
-
-
-        [Fact]
-        public async Task ShouldParseNotQuery()
-        {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
-
-            using (var session = _store.CreateSession())
-            {
-                var billsArticle = new Article
-                {
-                    Title = "Article by bill about rabbits"
-                };
-
-                var stevesArticle = new Article
-                {
-                    Title = "Post by steve about cats"
-                };
-
-                var paulsArticle = new Article
-                {
-                    Title = "Blog by paul about chickens"
-                };                
-
-                session.Save(billsArticle);
-                session.Save(stevesArticle);
-                session.Save(paulsArticle);
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                var search = "title:about NOT steve";          
-                var searchQuery = session.Query<Article>();
-
-                var parser = QueryParser(
-                    NamedTermParser("title",
-                        ManyConditionParser<Article>(
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.Contains(val)),
-                            (val, query) => query.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains(val))).OrderByDescending(x => x.Title)   
-                        )
-                    )
-                );
-
-                var parsed = parser.Parse(search);
-
-                await parsed.ExecuteQueryAsync(searchQuery, null);
-
-                // Order queries can be placed anywhere inside the booleans and they still get processed fine.  
-                var yesqlQuery = session.Query().For<Article>()
-                    .All(
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.IsNotIn<ArticleByPublishedDate>(s => s.Title, w => w.Title.Contains("steve"))).OrderByDescending(x => x.Title)
-                    )
-                    .Any(
-                        x => x.With<ArticleByPublishedDate>(x => x.Title.Contains("about"))
-                    )
-                    ;
-
-                // yesqlQuery.
-
-                // Normal yesql query
-                Assert.Equal(2, await yesqlQuery.CountAsync());
-                Assert.Equal("Blog by paul about chickens", (await yesqlQuery.FirstOrDefaultAsync()).Title);
-
-                // Built query.
-                // Assert.Equal("Post by steve about cats", (await searchQuery.FirstOrDefaultAsync()).Title);
-                Assert.Equal(2, await searchQuery.CountAsync());
-                Assert.Equal("Blog by paul about chickens", (await searchQuery.FirstOrDefaultAsync()).Title);
-            }
-        }                               
- 
-        // Linq expression visitors
-
-        public class PersonDocument
-        {
-            public List<Person> Persons = new List<Person>
-            {
-                new Person { Firstname = "Paul", Lastname = "Allen" },
-                new Person { Firstname = "Steve", Lastname = "Balmer" },
-                new Person { Firstname = "Bill", Lastname = "Gates" }
-            };
         }
-
-        public class PersonDictionaryDocument
-        {
-            public Dictionary<string, Person> Persons = new Dictionary<string, Person>
-            {
-                { "Paul", new Person { Firstname = "Paul", Lastname = "Allen" }},
-                { "Steve", new Person { Firstname = "Steve", Lastname = "Balmer" }},
-                { "Bill", new Person { Firstname = "Bill", Lastname = "Gates" }}
-            };
-        }
-
-        [Fact]
-        public void ShouldSearchQueryableDefaultContains()
-        {
-            var document = new PersonDocument();
-
-            var statementList = new StatementList(
-                new List<SearchStatement>
-                {
-                    new DefaultFilterStatement(
-                        new UnaryFilterExpression(
-                            new MatchOperator(),
-                            new SearchValue("Steve")
-                        )
-                    )
-                });
-
-            var context = new QueryableContext<Person>(statementList, document.Persons.AsQueryable())
-                .AddFilter("name", x => x.Firstname)
-                .SetDefaultFilter("name");
-
-            var visitor = new QueryableVisitor<Person>();
-
-            var persons = visitor.Visit(context);
-
-            Assert.Equal("Steve", document.Persons.Where(x => x.Firstname.Contains("Steve")).FirstOrDefault().Firstname);
-
-            Assert.Equal("Steve", persons.FirstOrDefault().Firstname);
-        }
-
-        [Fact]
-        public void ShouldSearchQueryableDictionaryKeyDefaultContains()
-        {
-            var document = new PersonDictionaryDocument();
-
-            var statementList = new StatementList(
-                new List<SearchStatement>
-                {
-                    new DefaultFilterStatement(
-                        new UnaryFilterExpression(
-                            new MatchOperator(),
-                            new SearchValue("Steve")
-                        )
-                    )
-                });
-
-            var context = new QueryableContext<KeyValuePair<string, Person>>(statementList, document.Persons.AsQueryable())
-                .AddFilter("name", x => x.Key)
-                .SetDefaultFilter("name");
-
-            var visitor = new QueryableVisitor<KeyValuePair<string, Person>>();
-
-            var persons = visitor.Visit(context);
-
-            Assert.Equal("Steve", document.Persons.Where(x => x.Key.Contains("Steve")).FirstOrDefault().Key);
-
-            Assert.Equal("Steve", persons.FirstOrDefault().Key);
-        }
-
-        [Fact]
-        public void ShouldSearchQueryableDictionaryValueDefaultContains()
-        {
-            var document = new PersonDictionaryDocument();
-
-            var statementList = new StatementList(
-                new List<SearchStatement>
-                {
-                    new DefaultFilterStatement(
-                        new UnaryFilterExpression(
-                            new MatchOperator(),
-                            new SearchValue("Steve")
-                        )
-                    )
-                });
-
-            var context = new QueryableContext<Person>(statementList, document.Persons.Values.AsQueryable())
-                .AddFilter("name", x => x.Firstname)
-                .SetDefaultFilter("name");
-
-            var visitor = new QueryableVisitor<Person>();
-
-            var persons = visitor.Visit(context);
-
-            Assert.Equal("Steve", document.Persons.Where(x => x.Value.Firstname.Contains("Steve")).FirstOrDefault().Value.Firstname);
-
-            Assert.Equal("Steve", persons.FirstOrDefault().Firstname);
-        }
-
-        // [Fact]
-        // public void ShouldSearchSerializeWithDefaultFilter()
-        // {
-        //     var statementList = new StatementList(
-        //         new List<SearchStatement>
-        //         {
-        //             new DefaultFilterStatement(
-        //                 new UnaryFilterExpression(
-        //                     new MatchOperator(),
-        //                     new SearchValue("Steve")
-        //                 )
-        //             )
-        //         });
-
-        //     var context = new QueryIndexContext<Person, PersonByName>(statementList, null)
-        //         .AddFilter("name", x => x.SomeName)
-        //         .SetDefaultFilter("name");
-
-
-        //     var visitor = new QueryIndexSerializer<Person, PersonByName>();
-
-        //     var serialized = visitor.Serialize(context);
-
-        //     Assert.Equal("name:Steve", serialized);
-        // }
-
-        [Fact]
-        public void ShouldSearchSerializeWithAdult()
-        {
-            var queryStringStatements = new List<SearchStatement>
-                {
-                    new FieldFilterStatement(
-                        "status",
-                        new UnaryFilterExpression(
-                            new MatchOperator(),
-                            new SearchValue("adult")
-                        )
-                    )
-                };
-
-           var formStatements = new List<SearchStatement>
-                {
-                    new FieldFilterStatement(
-                        "status",
-                        new UnaryFilterExpression(
-                            new NotMatchOperator("NOT "),
-                            new SearchValue("adult")
-                        )
-                    )
-                };                
-
-            var context = new QueryIndexContext<Person, PersonByAge>(new StatementList(queryStringStatements), null)
-                .AddFilter("status", x => x.Adult)
-                .SetDefaultFilter("status");
-
-
-            var visitor = new QueryIndexSerializer<Person, PersonByAge>();
-
-            var serialized = visitor.Serialize(context, new StatementList(queryStringStatements), new StatementList(formStatements));
-
-            Assert.Equal("status:NOT adult", serialized);
-        }        
 
         [Fact]
         public async Task ShouldQueryByReducedIndex()
@@ -3380,6 +2978,7 @@ namespace YesSql.Tests
                     session.Save(article);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3393,7 +2992,6 @@ namespace YesSql.Tests
 
                 Assert.Equal(7, await session.Query<Article, ArticlesByDay>(x => x.DayOfYear == 305 || x.DayOfYear == 306).CountAsync());
                 Assert.Equal(7, (await session.Query<Article, ArticlesByDay>(x => x.DayOfYear == 305 || x.DayOfYear == 306).ListAsync()).Count());
-
             }
         }
 
@@ -3421,6 +3019,7 @@ namespace YesSql.Tests
                     session.Save(article);
                 }
 
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3436,7 +3035,7 @@ namespace YesSql.Tests
         }
 
         [Fact]
-        public void ShouldSaveBigDocuments()
+        public async Task ShouldSaveBigDocuments()
         {
             using (var session = _store.CreateSession())
             {
@@ -3447,6 +3046,8 @@ namespace YesSql.Tests
 
 
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
         }
 
@@ -3461,6 +3062,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3489,6 +3092,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(drawing);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3511,12 +3116,14 @@ namespace YesSql.Tests
 
             _store.RegisterIndexes<ShapeIndexProvider<Circle>>();
             _store.RegisterIndexes<ShapeIndexProvider<Square>>();
-
+            
             using (var session = _store.CreateSession())
             {
                 session.Save(new Square { Size = 10 });
                 session.Save(new Square { Size = 20 });
                 session.Save(new Circle { Radius = 5 });
+
+                await session.SaveChangesAsync();
             };
 
             using (var session = _store.CreateSession())
@@ -3548,6 +3155,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(dog);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3576,6 +3185,8 @@ namespace YesSql.Tests
                 await session.FlushAsync();
 
                 circleId = circle.Id;
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3603,6 +3214,8 @@ namespace YesSql.Tests
                 await session.FlushAsync();
 
                 circleId = circle.Id;
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3629,6 +3242,8 @@ namespace YesSql.Tests
                 await session.FlushAsync();
 
                 circleId = circle.Id;
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3655,6 +3270,8 @@ namespace YesSql.Tests
                 await session.FlushAsync();
 
                 circleId = circle.Id;
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3682,6 +3299,8 @@ namespace YesSql.Tests
                 await session.FlushAsync();
 
                 circleId = circle.Id;
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3714,6 +3333,8 @@ namespace YesSql.Tests
                 }
 
                 await session.FlushAsync();
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3739,6 +3360,8 @@ namespace YesSql.Tests
                 session.Save(circle);
                 session.Save(circle);
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3761,12 +3384,16 @@ namespace YesSql.Tests
                 };
 
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
             {
                 circle.Radius = 20;
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3788,7 +3415,9 @@ namespace YesSql.Tests
                 };
 
                 session.Save(circle);
-                session.Cancel();
+                await session.CancelAsync();
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3809,11 +3438,13 @@ namespace YesSql.Tests
 
                 session.Save(circle);
 
-                session.Cancel();
+                await session.CancelAsync();
 
                 circle.Radius = 20;
 
                 await session.Query().For<Circle>().CountAsync();
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3833,17 +3464,21 @@ namespace YesSql.Tests
                 };
 
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
             {
-                session.Cancel();
+                await session.CancelAsync();
 
                 var circle = await session.Query().For<Circle>().FirstOrDefaultAsync();
 
                 circle.Radius = 20;
 
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3866,6 +3501,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3875,6 +3512,8 @@ namespace YesSql.Tests
 
                 circle.Radius = 20;
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3894,6 +3533,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             await using (var session = _store.CreateSession())
@@ -3902,6 +3543,8 @@ namespace YesSql.Tests
                 Assert.NotNull(circle);
                 circle.Radius = 20;
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             await using (var session = _store.CreateSession())
@@ -3921,6 +3564,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3943,6 +3588,8 @@ namespace YesSql.Tests
 
                 circle.Radius = 20;
                 session.Save(circle);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -3964,6 +3611,8 @@ namespace YesSql.Tests
                 session.Save(new Article { IsPublished = true });
                 session.Save(new Article { IsPublished = false });
                 session.Save(new Article { IsPublished = false });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4000,6 +3649,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 session.Save(steve);
                 session.Save(paul);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4039,6 +3690,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 session.Save(steve);
                 session.Save(paul);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4078,7 +3731,8 @@ namespace YesSql.Tests
 
             var task1 = Task.Run(async () =>
             {
-                using (var session1 = _store.CreateSession(IsolationLevel.ReadCommitted))
+                // IsolationLevel.ReadCommitted is the default
+                using (var session1 = _store.CreateSession())
                 {
                     Assert.Equal(0, await session1.QueryIndex<PersonByName>().CountAsync());
 
@@ -4092,6 +3746,8 @@ namespace YesSql.Tests
                     await session1.FlushAsync();
 
                     Assert.Equal(1, await session1.QueryIndex<PersonByName>().CountAsync());
+
+                    await session1.SaveChangesAsync();
                 }
 
                 session1IsDisposed.Set();
@@ -4101,7 +3757,8 @@ namespace YesSql.Tests
                     Assert.True(false, "session2IsDisposed timeout");
                 }
 
-                using (var session1 = _store.CreateSession(IsolationLevel.ReadCommitted))
+                // IsolationLevel.ReadCommitted is the default
+                using (var session1 = _store.CreateSession())
                 {
                     Assert.Equal(2, await session1.QueryIndex<PersonByName>().CountAsync());
                 }
@@ -4114,7 +3771,8 @@ namespace YesSql.Tests
                     Assert.True(false, "session1IsDisposed timeout");
                 }
 
-                using (var session2 = _store.CreateSession(IsolationLevel.ReadCommitted))
+                // IsolationLevel.ReadCommitted is the default
+                using (var session2 = _store.CreateSession())
                 {
                     Assert.Equal(1, await session2.QueryIndex<PersonByName>().CountAsync());
 
@@ -4129,9 +3787,12 @@ namespace YesSql.Tests
                     await session2.FlushAsync();
 
                     Assert.Equal(2, await session2.QueryIndex<PersonByName>().CountAsync());
+
+                    await session2.SaveChangesAsync();
                 }
 
-                using (var session2 = _store.CreateSession(IsolationLevel.ReadCommitted))
+                // IsolationLevel.ReadCommitted is the default
+                using (var session2 = _store.CreateSession())
                 {
                     Assert.Equal(2, await session2.QueryIndex<PersonByName>().CountAsync());
                 }
@@ -4170,9 +3831,9 @@ namespace YesSql.Tests
 
             var task1 = Task.Run(async () =>
             {
-                using (var session1 = _store.CreateSession(IsolationLevel.ReadUncommitted))
+                using (var session1 = _store.CreateSession())
                 {
-                    await session1.BeginTransactionAsync();
+                    await session1.BeginTransactionAsync(IsolationLevel.ReadUncommitted);
 
                     Assert.Equal(0, await session1.QueryIndex<PersonByName>().CountAsync());
 
@@ -4192,13 +3853,17 @@ namespace YesSql.Tests
                     {
                         Assert.True(false, "session2IsDisposed timeout");
                     }
+
+                    await session1.SaveChangesAsync();
                 }
 
-                using (var session1 = _store.CreateSession(IsolationLevel.ReadUncommitted))
+                using (var session1 = _store.CreateSession())
                 {
-                    await session1.BeginTransactionAsync();
+                    await session1.BeginTransactionAsync(IsolationLevel.ReadUncommitted);
 
                     Assert.Equal(2, await session1.QueryIndex<PersonByName>().CountAsync());
+
+                    await session1.SaveChangesAsync();
                 }
             });
 
@@ -4209,9 +3874,9 @@ namespace YesSql.Tests
                     Assert.True(false, "session1IsFlushed timeout");
                 }
 
-                using (var session2 = _store.CreateSession(IsolationLevel.ReadUncommitted))
+                using (var session2 = _store.CreateSession())
                 {
-                    await session2.BeginTransactionAsync();
+                    await session2.BeginTransactionAsync(IsolationLevel.ReadUncommitted);
 
                     Assert.Equal(1, await session2.QueryIndex<PersonByName>().CountAsync());
 
@@ -4226,13 +3891,17 @@ namespace YesSql.Tests
                     await session2.FlushAsync();
 
                     Assert.Equal(2, await session2.QueryIndex<PersonByName>().CountAsync());
+
+                    await session2.SaveChangesAsync();
                 }
 
-                using (var session2 = _store.CreateSession(IsolationLevel.ReadUncommitted))
+                using (var session2 = _store.CreateSession())
                 {
-                    await session2.BeginTransactionAsync();
+                    await session2.BeginTransactionAsync(IsolationLevel.ReadUncommitted);
 
                     Assert.Equal(2, await session2.QueryIndex<PersonByName>().CountAsync());
+
+                    await session2.SaveChangesAsync();
                 }
 
                 session2IsDisposed.Set();
@@ -4254,6 +3923,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4271,6 +3942,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(steve, "Col1");
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4300,6 +3973,8 @@ namespace YesSql.Tests
 
                 session.Save(bill, "Col1");
                 session.Save(steve, "Col1");
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4319,6 +3994,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(satya);
+
+                await session.SaveChangesAsync();
             }
 
             // Ensure the index hasn't been altered
@@ -4349,13 +4026,15 @@ namespace YesSql.Tests
 
                 session.Save(bill, "Col1");
                 session.Save(bill2, "Col1");
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
             {
                 Assert.Equal(2, (await session.QueryIndex<PersonsByNameCol>(x => x.Name == "Bill", "Col1").FirstOrDefaultAsync()).Count);
             }
-        }
+        }        
 
         [Fact]
         public async Task ShouldQueryInnerSelectWithCollection()
@@ -4381,6 +4060,8 @@ namespace YesSql.Tests
 
                 session.Save(bill, "Col1");
                 session.Save(elon, "Col1");
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4412,6 +4093,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(bill, "Col1");
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4423,6 +4106,8 @@ namespace YesSql.Tests
                 Assert.NotNull(person);
 
                 session.Delete(person, "Col1");
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4435,7 +4120,7 @@ namespace YesSql.Tests
         [Fact]
         public virtual async Task ShouldIndexWithDateTime()
         {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
+            _store.RegisterIndexes<ArticleBydPublishedDateProvider>();
 
             using (var session = _store.CreateSession())
             {
@@ -4463,6 +4148,8 @@ namespace YesSql.Tests
                 {
                     session.Save(article);
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4492,6 +4179,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 Assert.Equal(1, await session.Query<Person, PersonByName>().CountAsync());
                 Assert.Equal(1, await session.QueryIndex<PersonByName>().Where(x => x.SomeName == "Bill").CountAsync());
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4503,32 +4192,8 @@ namespace YesSql.Tests
                 Assert.Equal(1, await session.Query<Person, PersonByName>().CountAsync());
                 Assert.Equal(0, await session.QueryIndex<PersonByName>().Where(x => x.SomeName == "Bill").CountAsync());
                 Assert.Equal(1, await session.QueryIndex<PersonByName>().Where(x => x.SomeName == "Bill2").CountAsync());
-            }
-        }
 
-        [Fact]
-        public async Task PooledSessionsShouldCommit()
-        {
-            using (var session = _store.CreateSession())
-            {
-                session.Save(new Person
-                {
-                    Firstname = "Bill",
-                    Lastname = "Gates"
-                });
-
-                Assert.Equal(1, await session.Query<Person>().CountAsync());
-            }
-
-            using (var session = _store.CreateSession())
-            {
-                session.Save(new Person
-                {
-                    Firstname = "Bill2",
-                    Lastname = "Gates"
-                });
-
-                Assert.Equal(2, await session.Query<Person>().CountAsync());
+                await session.SaveChangesAsync();
             }
         }
 
@@ -4542,6 +4207,8 @@ namespace YesSql.Tests
                 person1 = new Person { Firstname = "Bill" };
                 session.Save(person1);
                 person2 = await session.Query<Person>().FirstOrDefaultAsync();
+
+                await session.SaveChangesAsync();
             }
 
             Assert.Equal(person1, person2);
@@ -4556,7 +4223,7 @@ namespace YesSql.Tests
         [InlineData("year", 2011)]
         public async Task SqlDateFunctions(string method, int expected)
         {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
+            _store.RegisterIndexes<ArticleBydPublishedDateProvider>();
 
             using (var session = _store.CreateSession())
             {
@@ -4566,6 +4233,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(article);
+
+                await session.SaveChangesAsync();
             }
 
             int result;
@@ -4585,7 +4254,7 @@ namespace YesSql.Tests
         [Fact]
         public async Task SqlNowFunction()
         {
-            _store.RegisterIndexes<ArticleByPublishedDateProvider>();
+            _store.RegisterIndexes<ArticleBydPublishedDateProvider>();
 
             var now = DateTime.UtcNow;
 
@@ -4602,6 +4271,8 @@ namespace YesSql.Tests
                         PublishedUtc = now.AddDays(-i)
                     });
                 }
+
+                await session.SaveChangesAsync();
             }
 
             int publishedInTheFutureResult, publishedInThePastResult;
@@ -4612,7 +4283,7 @@ namespace YesSql.Tests
 
                 var dialect = _store.Configuration.SqlDialect;
 
-                var publishedInTheFutureSql = "SELECT count(1) FROM " + dialect.QuoteForTableName(TablePrefix + nameof(ArticleByPublishedDate)) + " WHERE " + dialect.QuoteForColumnName(nameof(ArticleByPublishedDate.PublishedDateTime)) + " > " + dialect.RenderMethod("now");
+                var publishedInTheFutureSql = "SELECT count(1) FROM " + dialect.QuoteForTableName(TablePrefix + nameof(ArticleByPublishedDate)) + " WHERE " +  dialect.QuoteForColumnName(nameof(ArticleByPublishedDate.PublishedDateTime)) + " > " + dialect.RenderMethod("now");
                 publishedInTheFutureResult = await connection.QueryFirstOrDefaultAsync<int>(publishedInTheFutureSql);
 
                 var publishedInThePastSql = "SELECT count(1) FROM " + dialect.QuoteForTableName(TablePrefix + nameof(ArticleByPublishedDate)) + " WHERE " + dialect.QuoteForColumnName(nameof(ArticleByPublishedDate.PublishedDateTime)) + " < " + dialect.RenderMethod("now");
@@ -4637,6 +4308,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4660,6 +4333,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(user);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4667,6 +4342,8 @@ namespace YesSql.Tests
                 var user = await session.Query<User>().FirstOrDefaultAsync();
                 user.RoleNames.Remove("editor");
                 session.Save(user);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4692,6 +4369,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(user);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4699,6 +4378,8 @@ namespace YesSql.Tests
                 var user = await session.Query<User>().FirstOrDefaultAsync();
                 user.RoleNames.Add("editor");
                 session.Save(user);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4735,9 +4416,14 @@ namespace YesSql.Tests
                 {
                     session.Save(new Person { Firstname = $"Foo {i}" });
                 }
+
+                await session.SaveChangesAsync();
             }
 
-            var concurrency = 32;
+            var swGated = new Stopwatch();
+            var swNonGated = new Stopwatch();
+
+            var concurrency = 16;
             var MaxTransactions = int.MaxValue;
 
             var counter = 0;
@@ -4772,6 +4458,7 @@ namespace YesSql.Tests
 
             tasks = Enumerable.Range(1, concurrency).Select(i => Task.Run(async () =>
             {
+                swGated.Start();
                 while (!stopping && Interlocked.Add(ref counter, 1) < MaxTransactions)
                 {
                     using (var session = _store.CreateSession())
@@ -4781,17 +4468,25 @@ namespace YesSql.Tests
                         await session.Query().For<Person>().With<PersonByName>().Where(x => x.SomeName == "Steve").ListAsync();
                     }
                 }
+                swGated.Stop();
             })).ToList();
 
-            tasks.Add(Task.Delay(TimeSpan.FromSeconds(3)));
-
-            await Task.WhenAny(tasks);
+            await Task.WhenAny(tasks.Append(Task.Delay(TimeSpan.FromSeconds(3))));
 
             var gatedCounter = counter;
 
             // Flushing tasks
             stopping = true;
+
+            var delay = Task.Delay(TimeSpan.FromSeconds(10));
+
             await Task.WhenAll(tasks);
+
+            if (delay.IsCompleted)
+            {
+                Assert.True(false, "Gated threads didn't finish in time");
+            }
+
             stopping = false;
             counter = 0;
 
@@ -4801,6 +4496,7 @@ namespace YesSql.Tests
 
             tasks = Enumerable.Range(1, concurrency).Select(i => Task.Run(async () =>
             {
+                swNonGated.Start();
                 while (!stopping && Interlocked.Add(ref counter, 1) < MaxTransactions)
                 {
                     using (var session = _store.CreateSession())
@@ -4810,23 +4506,31 @@ namespace YesSql.Tests
                         await session.Query().For<Person>().With<PersonByName>().Where(x => x.SomeName == "Steve").ListAsync();
                     }
                 }
+                swNonGated.Stop();
             })).ToList();
 
-            tasks.Add(Task.Delay(TimeSpan.FromSeconds(3)));
-
-            await Task.WhenAny(tasks);
+            await Task.WhenAny(tasks.Append(Task.Delay(TimeSpan.FromSeconds(3))));
 
             var nonGatedCounter = counter;
 
+            delay = Task.Delay(TimeSpan.FromSeconds(10));
+
             // Flushing tasks
             stopping = true;
-            await Task.WhenAll(tasks);
+            await Task.WhenAny(tasks.Append(delay));
             stopping = false;
 
-            // Not running the statement in case it fails (non deterministic)
-            // Assert.True(gatedCounter > nonGatedCounter);
+            if (delay.IsCompleted)
+            {
+                Assert.True(false, "Non-gated threads didn't finish in time");
+            }
 
-            Console.WriteLine($"Gated: {gatedCounter} NonGated: {nonGatedCounter}");
+            var previousColor = Console.ForegroundColor;
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine($"{gatedCounter} gated queries in {swGated.Elapsed}");
+            Console.WriteLine($"{nonGatedCounter} non-gated in {swNonGated.Elapsed}");
+            Console.WriteLine($"Gated: {gatedCounter * 1000 / swGated.ElapsedMilliseconds:n0} tps; NonGated: {gatedCounter * 1000 / swNonGated.ElapsedMilliseconds:n0} tps");
+            Console.ForegroundColor = previousColor;
         }
 
         [Fact]
@@ -4843,6 +4547,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(oak);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4857,6 +4563,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(new Article { PublishedUtc = new DateTime(2013, 1, 21, 0, 0, 0, DateTimeKind.Local) });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4883,6 +4591,8 @@ namespace YesSql.Tests
                 session.Save(new Person { Firstname = "c" });
                 session.Save(new Person { Firstname = "e" });
                 session.Save(new Person { Firstname = "A" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4910,6 +4620,8 @@ namespace YesSql.Tests
                 {
                     session.Save(new Person { Firstname = i < 50 ? "D" : "E" });
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4932,6 +4644,8 @@ namespace YesSql.Tests
                 {
                     session.Save(new Person { Firstname = i < 50 ? "D" : "E" });
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4960,6 +4674,8 @@ namespace YesSql.Tests
 
                 Assert.Single(await session.Query<Person>().ListAsync());
                 Assert.True(bill.Id > 0);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -4972,6 +4688,8 @@ namespace YesSql.Tests
                 };
 
                 session.Import(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5013,6 +4731,8 @@ namespace YesSql.Tests
                 session.Save(bill);
                 session.Save(elon);
                 session.Save(isaac);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5040,7 +4760,7 @@ namespace YesSql.Tests
 
                 session.Save(bill);
 
-                await session.CommitAsync();
+                await session.SaveChangesAsync();
             }
 
             Assert.NotEmpty(logger.ToString());
@@ -5059,6 +4779,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(new Person { Firstname = "A" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5066,6 +4788,8 @@ namespace YesSql.Tests
                 var results = await session.Query<Person, PersonByName>().ListAsync();
                 Assert.Equal("A", results.ElementAt(0).Firstname);
                 session.Delete(results.First());
+
+                await session.SaveChangesAsync();
             }
 
             Assert.NotEmpty(logger.ToString());
@@ -5085,6 +4809,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(new Person { Firstname = "A" });
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5092,6 +4818,8 @@ namespace YesSql.Tests
                 var results = await session.Query<Person, PersonByName>().ListAsync();
                 Assert.Equal("A", results.ElementAt(0).Firstname);
                 session.Delete(results.First());
+
+                await session.SaveChangesAsync();
             }
 
             Assert.NotEmpty(logger.ToString());
@@ -5099,7 +4827,7 @@ namespace YesSql.Tests
         }
 
         [Fact]
-        public void ShouldCreateMoreObjectThanIdBlock()
+        public async Task ShouldCreateMoreObjectThanIdBlock()
         {
             var lastId = 0;
             var firstId = 0;
@@ -5117,6 +4845,8 @@ namespace YesSql.Tests
                         firstId = person.Id;
                     }
                 }
+
+                await session.SaveChangesAsync();
             }
 
             Assert.Equal(firstId + 1000 - 1, lastId);
@@ -5178,11 +4908,12 @@ namespace YesSql.Tests
 
                 // Create a command that will throw an exception
                 // Use an order of 4 so it will be at the end of the list
+                session._commands = new List<IIndexCommand>();
                 session._commands.Add(new FailingCommand(new Document()));
 
-                await Assert.ThrowsAnyAsync<Exception>(() => session.CommitAsync());
+                await Assert.ThrowsAnyAsync<Exception>(async () => await session.SaveChangesAsync());
 
-                Assert.Empty(session._commands);
+                Assert.Null(session._commands);
             }
         }
 
@@ -5204,6 +4935,8 @@ namespace YesSql.Tests
 
                 session.Save(bill);
                 session.Save(lion);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5235,6 +4968,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5265,6 +5000,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5376,6 +5113,8 @@ namespace YesSql.Tests
                 var email = new Person { Firstname = "Bill" };
 
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             var task1Saved = new ManualResetEvent(false);
@@ -5395,13 +5134,15 @@ namespace YesSql.Tests
                     if (!task2Loaded.WaitOne(5000))
                     {
                         Assert.True(false, "task2Loaded timeout");
-                        session.Cancel();
+                        await session.CancelAsync();
                     }
 
                     person.Lastname = "Gates";
 
                     session.Save(person, true);
                     Assert.NotNull(person);
+
+                    await session.SaveChangesAsync();
                 }
 
                 // Noify the other thread to save
@@ -5425,12 +5166,14 @@ namespace YesSql.Tests
                         if (!task1Saved.WaitOne(5000))
                         {
                             Assert.True(false, "task1Saved timeout");
-                            session.Cancel();
+                            await session.CancelAsync();
                         }
 
                         person.Lastname = "Doors";
                         session.Save(person, true);
                         Assert.NotNull(person);
+
+                        await session.SaveChangesAsync();
                     }
                 });
             });
@@ -5455,6 +5198,8 @@ namespace YesSql.Tests
                 var email = new Person { Firstname = "Bill" };
 
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5466,6 +5211,8 @@ namespace YesSql.Tests
 
                 session.Save(person);
                 Assert.NotNull(person);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5476,6 +5223,8 @@ namespace YesSql.Tests
                 person.Lastname = "Doors";
                 session.Save(person);
                 Assert.NotNull(person);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5501,6 +5250,8 @@ namespace YesSql.Tests
 
                 Assert.Single(await session.Query<Person>().ListAsync());
                 Assert.True(bill.Id > 0);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5513,6 +5264,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5546,6 +5299,7 @@ namespace YesSql.Tests
 
                 Assert.NotEqual(bill, newBill);
 
+                await session.SaveChangesAsync();
             }
         }
 
@@ -5558,6 +5312,8 @@ namespace YesSql.Tests
             {
                 var bill = new Person { Firstname = "Bill" };
                 session.Save(bill);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5616,7 +5372,7 @@ namespace YesSql.Tests
                 session.Save(property);
             }
         }
-
+        
         [Fact]
         public async Task ShouldCommitInMultipleCollections()
         {
@@ -5638,6 +5394,8 @@ namespace YesSql.Tests
 
 
                 session.Save(bill, "Col1");
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5672,6 +5430,8 @@ namespace YesSql.Tests
                 };
 
                 session.Save(bill, "Col1");
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5691,6 +5451,8 @@ namespace YesSql.Tests
                 var doc1 = new Person { Firstname = "Bill", Version = 11 };
 
                 session.Save(doc1);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5712,6 +5474,8 @@ namespace YesSql.Tests
                 var doc1 = new Person { Firstname = "Bill" };
 
                 session.Save(doc1);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5745,6 +5509,8 @@ namespace YesSql.Tests
                 var email = new Person { Firstname = "Bill" };
 
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             var viewModel = new Person
@@ -5764,6 +5530,8 @@ namespace YesSql.Tests
 
                 viewModel.Firstname = person.Firstname;
                 viewModel.Version = person.Version;
+
+                await session.SaveChangesAsync();
             }
 
             // User B loads the document, updates it
@@ -5778,6 +5546,8 @@ namespace YesSql.Tests
 
                 // The object is new, its version should be 1
                 Assert.Equal(1, person.Version);
+
+                await session.SaveChangesAsync();
             }
 
             // User A submits the changes, and should detect the version has changed
@@ -5812,6 +5582,8 @@ namespace YesSql.Tests
                 var email = new Person { Firstname = "Bill" };
 
                 session.Save(email);
+
+                await session.SaveChangesAsync();
             }
 
             var viewModel = new Person
@@ -5831,6 +5603,8 @@ namespace YesSql.Tests
 
                 viewModel.Firstname = person.Firstname;
                 viewModel.Version = person.Version;
+
+                await session.SaveChangesAsync();
             }
 
             // User B loads the document, updates it
@@ -5845,6 +5619,8 @@ namespace YesSql.Tests
 
                 // The object is new, its version should be 1
                 Assert.Equal(1, person.Version);
+
+                await session.SaveChangesAsync();
             }
 
             // User A submits the changes
@@ -5859,6 +5635,8 @@ namespace YesSql.Tests
                     person.Firstname = viewModel.Firstname;
 
                     session.Save(person);
+
+                    await session.SaveChangesAsync();
                 }
             });
 
@@ -5895,6 +5673,8 @@ namespace YesSql.Tests
                 var c = new Car { Name = "Clio" };
 
                 session.Save(c);
+
+                await session.SaveChangesAsync();
             }
 
             // Create initial document
@@ -5928,6 +5708,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(dummy);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5942,10 +5724,12 @@ namespace YesSql.Tests
 
                 ((IIndex)index).AddDocument(new Document { Id = dummy.Id });
 
-                var connection = await session.DemandAsync();
+                var connection = await session.CreateConnectionAsync();
                 var transaction = await session.BeginTransactionAsync();
 
                 await new CreateIndexCommand(index, new[] { dummy.Id }, session.Store, "").ExecuteAsync(connection, transaction, session.Store.Configuration.SqlDialect, session.Store.Configuration.Logger);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5982,6 +5766,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(dummy);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -5996,10 +5782,12 @@ namespace YesSql.Tests
 
                 ((IIndex)index).AddDocument(new Document { Id = dummy.Id });
 
-                var connection = await session.DemandAsync();
+                var connection = await session.CreateConnectionAsync();
                 var transaction = await session.BeginTransactionAsync();
 
                 await new CreateIndexCommand(index, new[] { dummy.Id }, session.Store, "").ExecuteAsync(connection, transaction, session.Store.Configuration.SqlDialect, session.Store.Configuration.Logger);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -6042,6 +5830,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(dummy);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -6056,10 +5846,12 @@ namespace YesSql.Tests
 
                 ((IIndex)index).AddDocument(new Document { Id = dummy.Id });
 
-                var connection = await session.DemandAsync();
+                var connection = await session.CreateConnectionAsync();
                 var transaction = await session.BeginTransactionAsync();
 
                 await new CreateIndexCommand(index, new[] { dummy.Id }, session.Store, "").ExecuteAsync(connection, transaction, session.Store.Configuration.SqlDialect, session.Store.Configuration.Logger);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -6096,6 +5888,8 @@ namespace YesSql.Tests
             using (var session = _store.CreateSession())
             {
                 session.Save(dummy);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -6110,10 +5904,12 @@ namespace YesSql.Tests
 
                 ((IIndex)index).AddDocument(new Document { Id = dummy.Id });
 
-                var connection = await session.DemandAsync();
+                var connection = await session.CreateConnectionAsync();
                 var transaction = await session.BeginTransactionAsync();
 
                 await new CreateIndexCommand(index, new[] { dummy.Id }, session.Store, "").ExecuteAsync(connection, transaction, session.Store.Configuration.SqlDialect, session.Store.Configuration.Logger);
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -6147,6 +5943,8 @@ namespace YesSql.Tests
                 {
                     session.Save(new Person { Age = i, Firstname = i.ToString(), Lastname = i.ToString() });
                 }
+
+                await session.SaveChangesAsync();
             }
 
             using (var session = _store.CreateSession())
@@ -6156,9 +5954,9 @@ namespace YesSql.Tests
                 // This will produce a query that batches at 2099 parameters which will fail.
                 // When reduced to a maximum to 2098, i.e. stopping the batch before 2099, it will pass.
                 foreach (var person in persons)
-                {
+                {   
                     session.Save(person);
-                }
+                }              
             }
         }
     }
